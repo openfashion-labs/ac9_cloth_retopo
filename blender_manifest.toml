@@ -1,0 +1,14 @@
+schema_version = "1.0.0"
+
+id = "ac9_cloth_retopo"
+version = "1.0.0"
+name = "AC9 Cloth Retopo"
+tagline = "UV Seam Guide + CLO Retopo Projector for garment retopology"
+maintainer = "AC9"
+type = "add-on"
+
+blender_version_min = "5.0.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+
+tags = ["Mesh", "Modeling"]
