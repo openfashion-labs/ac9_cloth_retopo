@@ -1,0 +1,14 @@
+# Normalize line endings for text files
+* text=auto
+
+# 3D / binary assets
+*.blend binary
+*.fbx binary
+*.glb binary
+*.gltf text
+*.exr binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.tif binary
+*.tiff binary
