@@ -33,7 +33,11 @@ Never commit any of the following:
 - **Personal data** — real names, email addresses, body scans or measurement
   data of real individuals, or any other personally identifiable information.
 - **Internal or customer material** — internal-only documents, customer data,
-  or anything else not meant to be public.
+  internal file paths or document names, or anything else not meant to be
+  public.
+
+This applies not only to files but also to **commit messages and pull request
+descriptions** — they become public along with the repository.
 
 Every pull request is scanned by
 [gitleaks](https://github.com/gitleaks/gitleaks) in CI, and merging is blocked
