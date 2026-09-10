@@ -186,7 +186,7 @@ class AC9_OT_BakeDrapeMap(bpy.types.Operator):
     """Bake the drape reference off the Guide's 3D shape onto its flat
     layout: Ambient Occlusion and Curvature (Geometry Pointiness), and their
     product into 'AC9_DrapeMap_<Guide name>' — the same two passes as baking
-    them by hand in SimpleBake plus the shader multiply, in one click. The
+    them by hand plus the shader multiply, in one click. The
     two passes are deleted again once the product exists (see 'Keep
     Passes'). The product is baked rather than
     left to a node so that Solid > Texture viewport shading can show it.

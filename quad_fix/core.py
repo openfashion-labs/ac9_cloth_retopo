@@ -9,7 +9,7 @@ Diagonals of a quad v0 v1 v2 v3 (loop order):
 
 Why "convex", not "min-fold"
 ----------------------------
-Validated against artist ground truth (JacketClose_sleeve_low, 12 manually
+Validated against artist ground truth (a production sleeve panel, 12 manually
 cut quads):
     convex-diagonal rule   matches the artist 11/12 (12/12 with the hybrid)
     min-fold rule          matches the artist  6/12

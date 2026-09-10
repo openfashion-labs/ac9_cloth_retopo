@@ -385,9 +385,9 @@ def _restore_local_views(saved) -> None:
 
 
 # Rays the AO node traces per shading sample, and the Cycles sample count
-# layered on top for pixel antialiasing. Same two-level split SimpleBake
-# uses (its ao_sample_count / boosted_sample_count), at the values the
-# production scene was baked with for the ray count.
+# layered on top for pixel antialiasing. The two-level split is what Cycles
+# imposes: the AO node's own ray count multiplies the bake's sample count.
+# The ray count is the value the production scene was baked with.
 # Rays per pixel = AO_BAKE_SAMPLES x AO_NODE_SAMPLES, and that product is
 # the whole cost of the AO pass on a CPU (measured on the production skirt
 # Guide, 202k verts, 1024px: 2048 rays/px = 27.6 s, 1024 = 15.6 s, 512 =
@@ -402,10 +402,14 @@ AO_NODE_SAMPLES = 64
 AO_BAKE_SAMPLES = 16
 
 # Pointiness values that map to pure black and pure white in the Curvature
-# pass. Copied from SimpleBake's specials.blend ColorRamp and deliberately
+# pass. Blender's Pointiness reads exactly 0.5 on a flat surface (measured
+# headless on 5.0.1: a subdivided plane baked 0.5000 across all 4096 covered
+# pixels), under 0.5 where the surface is concave and over it where convex.
+# The window is that flat value +/- 0.15, kept symmetric so that a fold and
+# a ridge of equal sharpness land equally far from mid grey. Deliberately
 # NOT auto-scaled per mesh: a fixed window is what makes two bakes of two
 # different Guides (or the same Guide at two stages) readable side by side.
-POINTINESS_RAMP = (0.35, 0.6364)
+POINTINESS_RAMP = (0.35, 0.65)
 
 
 def _build_emit_shader(nt, out_node, attr_name, shader, ao_distance_m):
@@ -652,22 +656,22 @@ def bake_to_image(
 # Drape maps (AO and Curvature — the "atari" for 2D knife-cutting)
 # ---------------------------------------------------------------------------
 #
-# What the user was doing by hand, read straight out of the production scene
-# 260609_Retopo_JacketClose_01.blend: bake AO and Curvature off the garment
-# with SimpleBake, then multiply the two in the shader (Mix node, MULTIPLY,
+# What this replaces, read straight out of the production scene: the AO and
+# Curvature passes were baked off the garment by hand, then multiplied
+# together in the shader (Mix node, MULTIPLY,
 # Factor 1.0) and read the result on the flat 2D layout as a shaded drape
 # reference while cutting panel boundaries.
 #
-# Both passes are produced the way SimpleBake's "specials" materials produce
-# them, because that is the look the user already works from:
+# Both passes are produced the same way that hand setup produced them,
+# because that is the look the user already works from:
 #
 #   AO         Ambient Occlusion node -> Emission, baked as EMIT.
 #              only_local is ON: the Guide occludes itself and nothing else,
 #              so the body mesh never darkens the map (the folds are the
 #              signal; a body shadow is not).
 #   Curvature  Geometry Pointiness -> ColorRamp -> Emission, baked as EMIT.
-#              The ramp positions are FIXED (POINTINESS_RAMP, the reference
-#              scene's own values) rather than auto-scaled per mesh, so
+#              The ramp positions are FIXED (POINTINESS_RAMP, a symmetric
+#              window around the flat value) rather than auto-scaled, so
 #              successive bakes stay directly comparable.
 #
 # Verified headless on Blender 5.0.1, background mode, CPU Cycles (Suzanne
@@ -680,10 +684,10 @@ def bake_to_image(
 # was about bake_type='AO', a different code path in Cycles; driving the AO
 # NODE through an emission shader is unaffected by that gap.
 #
-# Measured against what this replaced, on the production JacketOpen Guide
+# Measured against what this replaced, on a production Guide
 # (283k verts, 1024px, GPU), covered pixels only:
 #
-#                     old (per-vertex)   new (shader)   SimpleBake reference
+#                     old (per-vertex)   new (shader)   hand-baked reference
 #   AO       mean          0.6516          0.6473            0.6503
 #            std           0.3212          0.3512            0.3276
 #   Curv     mean          0.8700          0.5339            0.5329
@@ -692,8 +696,11 @@ def bake_to_image(
 #
 # The old AO was broadly right and merely slow. The old Curvature was not:
 # at mean 0.87 it had washed almost white, which is the failure its own
-# auto-scale was meant to avoid — the fixed Pointiness ramp lands on the
-# reference to three decimal places instead.
+# auto-scale was meant to avoid — a fixed Pointiness ramp lands in the
+# middle of the range instead. (The Curv figures in the table above were
+# taken with an earlier, slightly narrower ramp window; widening the top
+# end to the symmetric 0.65 shifts the mean by a few percent and leaves
+# the shape of the result alone.)
 #
 # The product is baked into a third image rather than left to a Mix node in
 # the Preview Plane's material: Solid > Texture viewport shading draws the
@@ -714,8 +721,8 @@ def bake_to_image(
 # map, against 50 MB for the raw float buffer. Keeping a
 # map in the file is therefore cheap enough to be the default ("Keep in
 # file"), and session-only stays available for anyone who would rather press
-# Bake again — the whole set re-bakes in under 5 s at 2048 on the production
-# JacketOpen Guide (283k verts, GPU).
+# Bake again — the whole set re-bakes in under 5 s at 2048 on a production
+# Guide (283k verts, GPU).
 
 AO_IMAGE = "AC9_AOMap"
 CURVATURE_IMAGE = "AC9_CurvatureMap"

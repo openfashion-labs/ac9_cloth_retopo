@@ -253,7 +253,7 @@ The header shows the count and the total MB in the .blend. The maps are diagnost
 
 **Why the composite is baked, not made of nodes**: Solid > Texture shading draws a material's **active Image Texture node** straight to the screen and never evaluates the node tree — so a node-side multiply shows nothing in the very mode this map is looked at in. The multiply therefore happens at bake time, and the ratio is **Map Settings → AO Mix** (change it and re-bake; measured 4.7 s).
 
-**The three drape maps are not packed into the .blend.** They are 32-bit float, 50 MB per image at 2K and 150 MB for the set, and embedding that is not worth it: measured on the production JacketOpen Guide (283k verts, GPU), all three re-bake at 2048 in 4.7 s. Press **Bake** again after reopening the file. Residual and Sag are still packed.
+**The three drape maps are not packed into the .blend.** They are 32-bit float, 50 MB per image at 2K and 150 MB for the set, and embedding that is not worth it: measured on a production Guide (283k verts, GPU), all three re-bake at 2048 in 4.7 s. Press **Bake** again after reopening the file. Residual and Sag are still packed.
 
 ### Map Settings (sub-panel)
 
