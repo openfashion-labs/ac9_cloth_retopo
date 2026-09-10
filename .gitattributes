@@ -1,6 +1,9 @@
 # Normalize line endings for text files
 * text=auto
 
+# Python wheels (bundled dependencies)
+*.whl binary
+
 # 3D / binary assets
 *.blend binary
 *.fbx binary

@@ -1,0 +1,65 @@
+schema_version = "1.0.0"
+
+id = "ac9_cloth_retopo"
+version = "1.0.0"
+name = "AC9 Cloth Retopo"
+tagline = "UV Seam Guide + CLO Retopo Projector for garment retopology"
+maintainer = "AC9"
+type = "add-on"
+
+blender_version_min = "5.0.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+
+tags = ["Mesh", "Modeling"]
+
+# Bundled Python dependency. shapely (2D boolean geometry) is what Preview
+# Fill and Grid Regions are built on; nothing else in the add-on needs it.
+# Blender installs the one wheel whose tag matches the running platform and
+# ignores the others:
+# https://docs.blender.org/manual/en/dev/advanced/extensions/python_wheels.html
+# shapely carries GEOS inside the wheel and needs only numpy, which Blender
+# already ships, so this is the whole dependency.
+#
+# TWO sets of wheels, because the Python version moves with Blender:
+# 5.0 is Python 3.11 and 5.1 is Python 3.13 (both measured on this
+# machine, 2026-09-09). A cp311 wheel is simply not seen by 5.1, so
+# shipping only one set would have left Preview Fill dead on whichever
+# Blender the user happens to run.
+#
+# `platforms` is deliberately NOT declared. PyPI has no cp311 shapely wheel
+# for windows-arm64, and declaring platforms would lock those users out of the
+# entire add-on rather than out of the two tools that need shapely - the rest
+# works without it, and both tools say what to install if it is missing.
+wheels = [
+  # Blender 5.0 ships Python 3.11 (measured 3.11.13)
+  "./wheels/shapely-2.1.2-cp311-cp311-macosx_10_9_x86_64.whl",
+  "./wheels/shapely-2.1.2-cp311-cp311-macosx_11_0_arm64.whl",
+  "./wheels/shapely-2.1.2-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+  "./wheels/shapely-2.1.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+  "./wheels/shapely-2.1.2-cp311-cp311-win_amd64.whl",
+  # Blender 5.1 ships Python 3.13 (measured 3.13.9)
+  "./wheels/shapely-2.1.2-cp313-cp313-macosx_10_13_x86_64.whl",
+  "./wheels/shapely-2.1.2-cp313-cp313-macosx_11_0_arm64.whl",
+  "./wheels/shapely-2.1.2-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+  "./wheels/shapely-2.1.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+  "./wheels/shapely-2.1.2-cp313-cp313-win_amd64.whl",
+]
+
+# Declaring this REPLACES Blender's own default exclusions, so they are
+# repeated here (see blender_ext.py: __pycache__, dot-files, in-source zips,
+# .blend backups) with the add-on's own additions:
+#   - the internal design notes, which are for whoever works ON the add-on,
+#     not for whoever installs it (they stay in the repository)
+#   - CLAUDE.md, same reason: contributor rules, not user documentation
+# docs/ IS shipped: en/ja is the manual.
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  ".*",
+  "/*.zip",
+  "*.blend[1-9]",
+  "/CLAUDE.md",
+  "/REDESIGN_uv_seam_guide.md",
+  "/UI_REDESIGN_PROPOSAL.md",
+]
