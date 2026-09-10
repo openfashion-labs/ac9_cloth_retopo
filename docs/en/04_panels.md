@@ -290,7 +290,7 @@ Every preset except **All Off** also turns the master switch on (so a request to
 | **Boundary** | for 2D boundary work: seam guides, free edges, creases, Folds, Twins, ghosts, anchors, vertex-count parity. Folds and Twins are here because **Generate** places vertices on the fold axis and **Self** / **Twin** rebuild one side from the other, so both are wanted while the boundary is being built |
 | **Seams** | for reading the Guide's seam structure: seams, free edges, Folds, Twins, the white outline, ghosts. **Pair Lines** is left off: with all of those drawn on the same edges it reads as noise (still a toggle) |
 | **Status** | for reading the **Verify -> Status** verdict: the status colors, the white outline, ghosts, anchors, vertex-count parity. The structural line colors (seams, free edges) are turned OFF here on purpose — the status colors are painted over those same edges and win, so leaving both on means one edge is being colored by two systems at once |
-| **3D Check** | for viewing the Mirror in 3D: the white outline, nothing else. (Named "Mirror" until 2026-09-09, which collided with the **Mirror** box of toggles further down.) |
+| **3D Check** | for viewing the Mirror in 3D: the white outline, nothing else |
 | **All Off** | turns every individual overlay off (leaves the master switch alone) |
 
 The **Seam Status** toggle only ever comes on with the **Status** preset, and while it is on the **Seams** and **Free Edges** rows are grayed out with a note: they are still ON, they are just being painted over.
