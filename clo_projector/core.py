@@ -128,6 +128,23 @@ def _get_guide_cache(guide_obj, flat_sk: str) -> dict:
     return _guide_cache[key]
 
 
+def peek_guide_cache(guide_obj, flat_sk: str):
+    """Return an already-built Guide cache, without building one.
+
+    Draw callbacks use this read-only path so opening or redrawing a viewport
+    can never trigger the expensive Guide triangle extraction / BVH build.
+    The normal projection and Refresh paths remain responsible for warming the
+    cache via :func:`_get_guide_cache`.
+    """
+    if guide_obj is None or not flat_sk:
+        return None
+    try:
+        key = _guide_cache_key(guide_obj, flat_sk)
+    except (AttributeError, ReferenceError, TypeError):
+        return None
+    return _guide_cache.get(key)
+
+
 SHAPEKEY_NAME = "AC9_3D_Project"
 FAILED_GROUP_NAME = "AC9_Project_Failed"
 

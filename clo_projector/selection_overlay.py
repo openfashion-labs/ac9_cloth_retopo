@@ -1,12 +1,11 @@
 """Selection-correspondence overlay for the CLO Retopo Projector.
 
-The retopo (2D) and its AC9_3D_Mirror (3D) share vertex indexing 1:1, but
-Blender can only edit ONE object at a time and won't show vertex selection on
-the other (object-mode) object.  So instead of fighting native selection, this
-overlay draws markers on the *partner* object at the positions corresponding to
-whatever is selected in the active edit object:
+Blender does not show one edit object's vertex selection on its partner object,
+so this overlay draws correspondence markers for the active edit selection:
 
-  * Editing the 2D retopo  → markers light up on the 3D mirror (garment).
+  * Editing the 2D retopo  → selected points are projected through the Guide
+    and markers light up at their current 3D positions (without reading the
+    potentially stale mirror topology).
   * Editing the 3D mirror   → markers light up on the 2D retopo (flat layout).
 
 This answers "where is this 3D vertex in 2D?" (and vice-versa) at a glance,
@@ -22,6 +21,7 @@ import gpu
 from bpy.app.handlers import persistent
 from gpu_extras.batch import batch_for_shader
 
+from . import core
 from . import mirror as mirror_mod
 
 _MARKER_COLOR = (1.0, 0.55, 0.05, 1.0)   # orange — distinct from seams/boundary
@@ -30,7 +30,7 @@ _draw_handle = None
 
 _state: dict = {
     "batch": None,
-    "sig":   None,     # (source_name, target_name, frozenset(selected_indices))
+    "sig":   None,     # source/target names + selected indices and coordinates
     "dirty": True,     # force rebuild (e.g. after a Refresh moved target verts)
 }
 
@@ -65,9 +65,9 @@ def _resolve_source_target(context):
     if active is retopo:
         if mirror is None:
             return None, None, None
-        mw = mirror.matrix_world
-        target_pos = [mw @ v.co for v in mirror.data.vertices]
-        return retopo, mirror, target_pos
+        # 2D -> 3D is resolved geometrically in _marker_coords().  In
+        # particular, do not read the stale/index-shifted Mirror vertices.
+        return retopo, mirror, None
 
     if mirror is not None and active is mirror:
         from .guide import get_basis_local
@@ -78,14 +78,50 @@ def _resolve_source_target(context):
     return None, None, None
 
 
-def _selected_indices(edit_obj):
-    """Indices of selected vertices in *edit_obj*'s edit bmesh."""
+def _selected_verts(edit_obj):
+    """Selected ``(index, local_coordinate)`` pairs from the live edit BMesh."""
     import bmesh
     try:
         bm = bmesh.from_edit_mesh(edit_obj.data)
     except Exception:  # noqa: BLE001
-        return frozenset()
-    return frozenset(v.index for v in bm.verts if v.select)
+        return ()
+    bm.verts.ensure_lookup_table()
+    bm.verts.index_update()
+    return tuple((v.index, v.co.copy()) for v in bm.verts if v.select)
+
+
+def _selection_signature(selected):
+    """Hashable selection signature that also notices live vertex movement."""
+    return tuple(
+        (index, round(co.x, 6), round(co.y, 6), round(co.z, 6))
+        for index, co in selected
+    )
+
+
+def _marker_coords(top, source, target_pos, selected):
+    """Resolve marker positions without constructing a Guide cache.
+
+    Retopo selections are projected directly through an already-warm Guide
+    cache.  Mirror selections keep the legacy index path until the second
+    selection-link stage adds ``ac9_src_2d``.
+    """
+    if source is top.retopo_obj:
+        guide = top.guide_obj
+        flat_sk = top.guide_flat_shapekey
+        if core.peek_guide_cache(guide, flat_sk) is None:
+            return []
+        points_world = [source.matrix_world @ co for _index, co in selected]
+        projected, attachments, _failed = core.compute_forward_world(
+            points_world, guide, flat_sk
+        )
+        return [point for point, attachment in zip(projected, attachments)
+                if attachment.is_ok]
+
+    if target_pos is None:
+        return []
+    n_target = len(target_pos)
+    return [target_pos[index] for index, _co in selected
+            if 0 <= index < n_target]
 
 
 def _draw_callback():
@@ -108,12 +144,11 @@ def _draw_callback():
         _state["sig"] = None
         return
 
-    selected = _selected_indices(source)
-    sig = (source.name, target.name, selected)
+    selected = _selected_verts(source)
+    sig = (source.name, target.name, _selection_signature(selected))
 
     if _state["dirty"] or sig != _state["sig"] or _state["batch"] is None:
-        n_target = len(target_pos)
-        coords = [target_pos[i] for i in selected if 0 <= i < n_target]
+        coords = _marker_coords(top, source, target_pos, selected)
         if coords:
             shader = gpu.shader.from_builtin("UNIFORM_COLOR")
             _state["batch"] = batch_for_shader(shader, "POINTS", {"pos": coords})
