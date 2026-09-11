@@ -826,8 +826,8 @@ _UI_STRINGS = {
         "対応する Seam 端点どうしをつなぐ線を描きます",
     "Draw lines from every retopo vertex to its opposite-side ghost. Off by default — the full set is cluttered; use 'Show Pair for Selected Only' to see just the connections you care about":
         "各 retopo 頂点から対岸の Ghost へ線を描きます。既定は OFF です — 全部出すとごちゃつくので、見たい接続だけを見るには 'Show Pair for Selected Only' を使ってください",
-    "Draw orange markers on the partner object at the vertices corresponding to the current selection. Select on the 2D retopo to see where they are on the 3D mirror — or select on the mirror to find them in the 2D layout. Works with vertex / edge / face / loop / shortest-path selections":
-        "現在の選択に対応する頂点の位置に、相手側オブジェクト上でオレンジのマーカーを描きます。2D retopo 上で選択すれば 3D Mirror 上のどこかが分かり、Mirror 上で選択すれば 2D レイアウト上で見つけられます。頂点／辺／面／ループ／最短パスのどの選択でも動きます",
+    "Draw orange markers at corresponding positions. A 2D Retopo selection uses its live Guide projection; a Mirror selection uses the 2D source stored by the last Refresh. Works with vertex / edge / face / loop / shortest-path selections":
+        "対応する位置にオレンジのマーカーを描きます。2D Retopo 側の選択には現在の Guide 投影位置を使い、Mirror 側の選択には最後の Refresh で記録した生成元 2D 位置を使います。頂点／辺／面／ループ／最短パスのどの選択でも動きます",
     "Draw the detected fold (centre) line of each self-symmetric UV island. Run Detect Folds (or Analyze Symmetry) first":
         "自己対称な各 UV アイランドについて、検出した折れ（中心）線を描きます。先に Detect Folds（または Analyze Symmetry）を実行してください",
     "Draw the Guide's full pattern outline as white lines over the Guide mesh: every open-boundary edge (the pattern outline — sewn seams and free edges alike), plus any UV-seam-marked edge. Always on top, so it stays visible in Solid mode, and follows the Guide's current ShapeKey blend (2D ↔ 3D). The cyan Seams overlay shows only the sewn pairs":

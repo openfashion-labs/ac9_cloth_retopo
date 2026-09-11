@@ -101,11 +101,10 @@ class AC9CloProjectorProps(PropertyGroup):
     show_selection_link: BoolProperty(
         name="Selection Link",
         description=(
-            "Draw orange markers on the partner object at the vertices "
-            "corresponding to the current selection. Select on the 2D retopo to "
-            "see where they are on the 3D mirror — or select on the mirror to "
-            "find them in the 2D layout. Works with vertex / edge / face / loop "
-            "/ shortest-path selections"
+            "Draw orange markers at corresponding positions. A 2D Retopo "
+            "selection uses its live Guide projection; a Mirror selection "
+            "uses the 2D source stored by the last Refresh. Works with vertex "
+            "/ edge / face / loop / shortest-path selections"
         ),
         default=True,
         update=_tag_redraw_3d_prop,

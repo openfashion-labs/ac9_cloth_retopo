@@ -16,6 +16,8 @@ face also flags its vertices as selected in bmesh, so edge/face/loop/shortest-
 path selections all map across correctly.
 """
 
+import math
+
 import bpy
 import gpu
 from bpy.app.handlers import persistent
@@ -70,12 +72,68 @@ def _resolve_source_target(context):
         return retopo, mirror, None
 
     if mirror is not None and active is mirror:
-        from .guide import get_basis_local
-        mw = retopo.matrix_world
-        target_pos = [mw @ co for co in get_basis_local(retopo)]
+        target_pos = _src2d_world_positions(mirror, retopo)
         return mirror, retopo, target_pos
 
     return None, None, None
+
+
+def _src2d_world_positions(mirror, retopo):
+    """Read Refresh-time 2D origins from the live Mirror mesh.
+
+    Old Mirrors without ``ac9_src_2d`` retain the index fallback only when
+    their vertex count still matches the Retopo. A topology mismatch must be
+    invisible rather than silently mapped to unrelated vertices.
+    """
+    local = None
+    valid = None
+    if mirror.mode == "EDIT":
+        import bmesh
+        try:
+            bm = bmesh.from_edit_mesh(mirror.data)
+            bm.verts.ensure_lookup_table()
+            bm.verts.index_update()
+            layer = bm.verts.layers.float_vector.get(mirror_mod.SRC_2D_ATTR)
+            if layer is not None:
+                local = [vert[layer].copy() for vert in bm.verts]
+                valid_layer = bm.verts.layers.int.get(
+                    mirror_mod.SRC_2D_VALID_ATTR
+                )
+                if valid_layer is not None:
+                    valid = [bool(vert[valid_layer]) for vert in bm.verts]
+        except (ReferenceError, RuntimeError):
+            return []
+    else:
+        attr = mirror.data.attributes.get(mirror_mod.SRC_2D_ATTR)
+        if (attr is not None and attr.data_type == "FLOAT_VECTOR"
+                and attr.domain == "POINT"
+                and len(attr.data) == len(mirror.data.vertices)):
+            local = [item.vector.copy() for item in attr.data]
+            valid_attr = mirror.data.attributes.get(
+                mirror_mod.SRC_2D_VALID_ATTR
+            )
+            if (valid_attr is not None and valid_attr.data_type == "INT"
+                    and valid_attr.domain == "POINT"
+                    and len(valid_attr.data) == len(local)):
+                valid = [bool(item.value) for item in valid_attr.data]
+
+    if local is None:
+        from .guide import get_basis_local
+        fallback = get_basis_local(retopo)
+        if len(mirror.data.vertices) != len(fallback):
+            return []
+        local = fallback
+    if valid is None:
+        valid = [True] * len(local)
+    generated_count = int(mirror.data.get(
+        mirror_mod.SRC_2D_COUNT_PROP, len(local)
+    ))
+    valid = [is_valid and index < generated_count
+             for index, is_valid in enumerate(valid)]
+
+    mw = retopo.matrix_world
+    return [mw @ co if is_valid and all(math.isfinite(value) for value in co)
+            else None for co, is_valid in zip(local, valid)]
 
 
 def _selected_verts(edit_obj):
@@ -102,8 +160,7 @@ def _marker_coords(top, source, target_pos, selected):
     """Resolve marker positions without constructing a Guide cache.
 
     Retopo selections are projected directly through an already-warm Guide
-    cache.  Mirror selections keep the legacy index path until the second
-    selection-link stage adds ``ac9_src_2d``.
+    cache. Mirror selections use the Refresh-time ``ac9_src_2d`` snapshot.
     """
     if source is top.retopo_obj:
         guide = top.guide_obj
@@ -121,7 +178,7 @@ def _marker_coords(top, source, target_pos, selected):
         return []
     n_target = len(target_pos)
     return [target_pos[index] for index, _co in selected
-            if 0 <= index < n_target]
+            if 0 <= index < n_target and target_pos[index] is not None]
 
 
 def _draw_callback():

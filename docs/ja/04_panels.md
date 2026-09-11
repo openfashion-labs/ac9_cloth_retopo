@@ -297,7 +297,7 @@ OFF にすると毎フレームの描画コールバックが冒頭で打ち切�
 | **Marks** | 見出しに **Analyze Anchors** の更新ボタン。**Anchors** / **Corners**（Experimental）/ **Pins**（Experimental）。**Anchors** を ON にしたのに解析が無いと赤い警告が出る。解析済みならアンカー数とスパン数が出る |
 | **Ghosts** | 見出しに手動更新（**Refresh Ghosts**）と **×**（**Clear Ghost Points**）。**Selected Only** / **Points**（ON のとき **Only Unplaced** が有効）/ **Lines** / **Snap Radius** |
 | **Status** | **Vertex Counts** / **Seam Status** / **Boundary Flags** |
-| **Mirror** | **Selection Link** — 相手オブジェクト側の対応頂点にオレンジのマーカーを描く。頂点 / 辺 / 面 / ループ / 最短経路の選択に対応 |
+| **Mirror** | **Selection Link** — 2D側の選択は現在のGuide投影位置、Mirror側の選択はRefresh時に記録した生成元2D位置へオレンジのマーカーを描く。頂点 / 辺 / 面 / ループ / 最短経路の選択に対応。使い捨てのMirror上へ直接追加した頂点には生成元がないため、Refreshで作り直すまでマーカーを描かない |
 | **Guide** | **Islands** スライダ（**Alpha**）と **Bake** / **×** — Guide の UV アイランドを検出して頂点色属性に書き、それを表示する簡単なマテリアルを作る。GPU オーバーレイではないが「Guide に何が見えているか」という同じ問いなので、ここに置かれている |
 
 **Seams (cyan)** と **Free Edges (yellow)** は平面レイアウト上で型紙輪郭を二分します。シアン = 相手のある縫い目、黄 = 縫い相手のないフリー辺（裾・襟ぐり・開き）。CLO 書き出しは `use_seam` フラグを 1 本も持たないことがあり（実測: 境界辺 5,133 に対し `use_seam` 0）、その場合フリー辺は黄の線でしか見えません。3D 側の **Outline (white)** は Guide の開いた境界辺すべて（＋ UV シームが付いた辺）を描くので、`use_seam` の有無に関わらず出ます。
