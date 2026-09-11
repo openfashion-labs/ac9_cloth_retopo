@@ -253,7 +253,7 @@ The header shows the count and the total MB in the .blend. The maps are diagnost
 
 **Why the composite is baked, not made of nodes**: Solid > Texture shading draws a material's **active Image Texture node** straight to the screen and never evaluates the node tree — so a node-side multiply shows nothing in the very mode this map is looked at in. The multiply therefore happens at bake time, and the ratio is **Map Settings → AO Mix** (change it and re-bake; measured 4.7 s).
 
-**The three drape maps are not packed into the .blend.** They are 32-bit float, 50 MB per image at 2K and 150 MB for the set, and embedding that is not worth it: measured on the production JacketOpen Guide (283k verts, GPU), all three re-bake at 2048 in 4.7 s. Press **Bake** again after reopening the file. Residual and Sag are still packed.
+**The three drape maps are not packed into the .blend.** They are 32-bit float, 50 MB per image at 2K and 150 MB for the set, and embedding that is not worth it: measured on a production Guide (283k verts, GPU), all three re-bake at 2048 in 4.7 s. Press **Bake** again after reopening the file. Residual and Sag are still packed.
 
 ### Map Settings (sub-panel)
 
@@ -290,7 +290,7 @@ Every preset except **All Off** also turns the master switch on (so a request to
 | **Boundary** | for 2D boundary work: seam guides, free edges, creases, Folds, Twins, ghosts, anchors, vertex-count parity. Folds and Twins are here because **Generate** places vertices on the fold axis and **Self** / **Twin** rebuild one side from the other, so both are wanted while the boundary is being built |
 | **Seams** | for reading the Guide's seam structure: seams, free edges, Folds, Twins, the white outline, ghosts. **Pair Lines** is left off: with all of those drawn on the same edges it reads as noise (still a toggle) |
 | **Status** | for reading the **Verify -> Status** verdict: the status colors, the white outline, ghosts, anchors, vertex-count parity. The structural line colors (seams, free edges) are turned OFF here on purpose — the status colors are painted over those same edges and win, so leaving both on means one edge is being colored by two systems at once |
-| **3D Check** | for viewing the Mirror in 3D: the white outline, nothing else. (Named "Mirror" until 2026-09-09, which collided with the **Mirror** box of toggles further down.) |
+| **3D Check** | for viewing the Mirror in 3D: the white outline, nothing else |
 | **All Off** | turns every individual overlay off (leaves the master switch alone) |
 
 The **Seam Status** toggle only ever comes on with the **Status** preset, and while it is on the **Seams** and **Free Edges** rows are grayed out with a note: they are still ON, they are just being painted over.
@@ -312,7 +312,7 @@ The **Seam Status** toggle only ever comes on with the **Status** preset, and wh
 
 Most of this is drawn from the cache that **Analyze Seams** fills. That cache is emptied on file load and Reload Scripts, so when it's empty this panel also shows "Seams not analyzed" with an **Analyze** button.
 
-<!-- screenshot: the Overlays panel (presets and each toggle box) -->
+![The Overlays panel: master switch, presets (Boundary / Seams / Status / 3D Check / All Off), the individual toggles, and a viewport with the overlays drawn.](../images/04_overlays_panel.png)
 
 ### Appearance (sub-panel)
 

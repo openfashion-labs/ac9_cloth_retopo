@@ -46,7 +46,7 @@ A **view-only 3D display** of the flat Retopo, projected onto the Guide.
 - It is rebuilt from scratch every time you press **Refresh**
 - Any manual edits to it are silently overwritten on the next **Refresh**. Only the **vertex selection state** is read back (for the Selection Link overlay)
 
-In code, the object name is `<Retopo name>_AC93DMirror`, and the link to the Retopo is via the custom property `ac9_mirror_of` (the Retopo's name).
+In code, the object name is `<Retopo name>_AC93DMirror`, and it is linked back to the Retopo through a custom property.
 Note that the UI wording refers to it as `AC9_3D_Mirror`, but the object actually created is named `<Retopo name>_AC93DMirror` as above. Look for that in the Outliner.
 
 ### Final
@@ -59,10 +59,19 @@ The deliverable produced by **Finalize**: a plain mesh object named `<Retopo nam
 
 The Retopo itself is left untouched (still flat, still editable). You can run this as many times as you like.
 
+### Dihedral angle
+
+How sharply two faces meet across the edge between them.
+**0deg is flat** (the two faces lie in the same plane); the sharper the fold, the larger the angle.
+
+**Crease Min Angle** and **Fold Min Angle** are thresholds on this angle.
+
 ## "2D is authoritative, 3D is a mirror"
 
+![How Guide, Retopo, Mirror and Final relate. Guide is one object holding both the 2D and the 3D coordinates; Retopo is always flat and is the only thing you edit; Mirror is a view-only 3D result rebuilt from Retopo plus Guide on every Refresh; Final is the deliverable.](../images/01_2d_is_truth.png)
+
 The previous approach used a single object that moved between 2D (Basis) and 3D (`AC9_3D_Project`) via a shape key value, and let you edit it in either state.
-Editing in 3D meant going through a fragile reverse-projection path (`run_reverse_projection` plus spike repair for new vertices), and you couldn't see both the 2D layout and the 3D shape at the same time.
+Editing in 3D meant going through a fragile reverse-projection path (including spike repair for new vertices), and you couldn't see both the 2D layout and the 3D shape at the same time.
 
 The current Mirror approach fixes this in two ways.
 

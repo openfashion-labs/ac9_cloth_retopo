@@ -1984,7 +1984,7 @@ def _partner_us(entries, pair_span, stored_span):
     files parameters against the span as STORED, so on a reversed pair the
     two sides' parameters run against each other. Comparing them as they come
     then reports a perfectly paired seam as wildly out: measured on the
-    production jacket (ML_Retopo_06), three seams read 20.3 / 21.1 / 13.2 mm
+    production jacket, three seams read 20.3 / 21.1 / 13.2 mm
     apart where the true figures are 0.045 / 0.031 / 0.047 mm. Roughly half
     the pairs in that file are stored reversed (23 of 43), so this is the
     common case, not an edge one.

@@ -2,6 +2,8 @@
 
 # AC9 Cloth Retopo
 
+![AC9 Cloth Retopo - 低ポリのリトポメッシュと、仕上がりのレンダー](docs/images/readme_hero.png)
+
 CLO / Marvelous Designer で作った衣装メッシュを、平面に展開した型紙のかたち（2D）のままリトポロジーするための Blender アドオンです。
 3D の形は、平面のリトポを高ポリの Guide へ重心座標で投影して得ます。編集は常に 2D、3D は閲覧専用の鏡（Mirror）という設計です。
 

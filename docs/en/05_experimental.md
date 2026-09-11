@@ -67,7 +67,7 @@ The old workflow, where the Retopo itself moved between 2D (Basis) and 3D (the `
 | **Bind → New Verts** | binds vertices created in 3D Edit Mode (missing attachments, or inconsistent with their 2D position) onto the Guide's surface, and repairs their 2D Basis position. Uses neighboring vertices' attachments to land on the correct fold side of the fabric |
 | **Bind → Auto** | runs the above automatically whenever you leave Edit Mode |
 
-Not so much unfinished as deliberately not recommended. Editing in 3D goes through a fragile reverse-projection path (`run_reverse_projection` plus spike repair for new vertices).
+Not so much unfinished as deliberately not recommended. Editing in 3D goes through a fragile reverse-projection path (including spike repair for new vertices).
 The **Sync** family is also Object Mode only — calling it from Edit Mode forces an Edit→Object→Edit mode switch that carries a heavy mesh rewrite, which can crash Blender on a large Guide.
 A red warning line reports the count of any vertices that straddle a UV island boundary.
 

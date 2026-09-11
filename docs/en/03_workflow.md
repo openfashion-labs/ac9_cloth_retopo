@@ -27,7 +27,12 @@ Every step works on the **Guide**, so set **Guide** in the **Setup** panel above
 **Next**: the result line below the panel shows the counts of what happened (vertices absorbed, sliver triangles removed, band-width achievement rate, etc.). Check that no spot is reported where the band width came out extremely thin relative to **Width**.
 Don't apply Solidify until the very end.
 
-<!-- screenshot: the Prepare panel (1 Flat SK through 4 Pieces, and the result line) -->
+![The Guide Prep panel (1 Flat SK / 2 Folds / 3 Lines / 4 Pieces) next to the pattern pieces laid out flat.](../images/03_prepare_panel.png)
+
+The payoff shows up in 3D. Left is the raw export, right is after **Inset Line** / **Inset Pieces** — the hard crease that ran along the fold line is gone.
+
+![The shoulder of a CLO export. On the left a sharp ridge runs along the fold line; on the right, after the inset pass, the surface is smooth.](../images/04_inset_before_after.jpg)
+
 
 ## 2. Setup — specify inputs and analyze
 
@@ -58,7 +63,7 @@ A hole left by **Delete**-ing vertices is refilled by **Generate**; a spot left 
 While red (both sides present but not matching) or orange (only one side present) remain, the sewn seams won't line up in 3D even after faces are filled.
 The full table is written out to the text block `AC9_SeamStatus`.
 
-<!-- screenshot: the Boundary panel's Object Mode side, and a viewport with the Seam Status overlay all green -->
+![The Boundary panel: Object Mode tools (Generate / Status) and Edit Mode tools (Match / Ghosts / Snap / Bond), with the boundary vertex rows Generate produced.](../images/03_boundary_panel.png)
 
 ## 4. Faces — fill in the 2D interior
 
@@ -71,7 +76,11 @@ The full table is written out to the text block `AC9_SeamStatus`.
 **Next**: the result line below the panel shows how many open ends were connected, how many regions were filled, and how many rungs were created.
 Check the Mirror to confirm the face flow isn't broken anywhere.
 
-<!-- screenshot: the Faces panel (Edit Mode side) and the results of Connect / Connect Rows -->
+![The Faces panel (Edit Mode side) with Auto Fill having laid a quad grid inside every pattern piece.](../images/03_faces_connect.png)
+
+**Subdivide** splits in 2D and re-projects into 3D, so raising the resolution never costs you the silhouette.
+
+![Subdivide before and after: a coarse quad jacket gains density while keeping its silhouette.](../images/03_subdivide.gif)
 
 ## 5. 3D View — check in 3D and finalize
 
@@ -107,7 +116,7 @@ Retopo → Mirror: hiding on the Mirror alone changes nothing on the Retopo and 
 next sync. Blender only draws geometry as hidden in Edit Mode, so **a Mirror in Object Mode looks
 the same as always** — the flags are there, and you see them the moment you Tab in.
 
-<!-- screenshot: the 3D View panel, and the Mirror sitting on top of the Guide -->
+![The 3D View panel and the 3D Mirror built from the flat Retopo. `Retopology_AC93DMirror` in the outliner is the object itself.](../images/03_3dview_mirror.png)
 
 ## 6. Guide Maps — diagnostic bakes (optional)
 
@@ -124,7 +133,7 @@ Map images are per Guide, so several garments in one file never overwrite each o
 **Next**: confirm the map is actually visible. If it isn't, check whether **Solid** is set to **Texture** and whether the **Retopology** overlay is on (the Preview Plane sits 5 mm below the Retopo).
 Progress is shown only as staged text, since the bake itself (`bpy.ops.object.bake`) doesn't report incremental percentages — that stretch of the process will look stalled.
 
-<!-- screenshot: the Guide Maps panel, and the Residual Map showing on the Preview Plane -->
+![The Guide Maps panel, with the Residual / Sag / Drape bake buttons and the Preview selector.](../images/03_guide_maps_panel.png)
 
 ## 7. Cleanup
 

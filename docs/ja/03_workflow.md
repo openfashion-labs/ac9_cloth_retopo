@@ -27,7 +27,12 @@ CLO / Marvelous Designer で衣装を書き出し、Blender に読み込みま�
 **次へ**: パネル下の結果行に処理件数（吸収した頂点数、除去した針状三角形、帯幅の達成率など）が出ます。帯幅が **Width** に対して極端に細い箇所が報告されていないか見てください。
 Solidify は最後まで適用しないこと。
 
-<!-- screenshot: Prepare パネル（1 Flat SK 〜 4 Pieces と結果行） -->
+![Guide Prep パネル（1 Flat SK / 2 Folds / 3 Lines / 4 Pieces）と、平面に展開された型紙。](../images/03_prepare_panel.png)
+
+整えた効果は 3D に出ます。左が書き出したまま、右が **Inset Line** / **Inset Pieces** の後 — 折れ線に沿って走っていた鋭い折れが消えています。
+
+![CLO 書き出しの肩まわり。左は折れ線に沿って鋭い筋が入っているが、右はインセット後で滑らかになっている。](../images/04_inset_before_after.jpg)
+
 
 ## 2. Setup — 入力を指定して解析する
 
@@ -58,7 +63,7 @@ Solidify は最後まで適用しないこと。
 赤（両側の数が違う）・紫（数は同じだが位置が合わない）・オレンジ（片側だけ）が残っているうちは、面を張っても縫い目が 3D で一致しません。赤とオレンジは **Match** / **Generate** で埋まりますが、紫は頂点を動かす作業なのでボタンでは直りません。
 全件の表はテキストブロック `AC9_SeamStatus` に書き出されます。
 
-<!-- screenshot: Boundary パネル Object Mode 側と、Seam Status オーバーレイが緑になったビューポート -->
+![Boundary パネル。Object Mode tools（Generate / Status）と Edit Mode tools（Match / Ghosts / Snap / Bond）、および Generate が作った境界頂点列。](../images/03_boundary_panel.png)
 
 ## 4. Faces — 2D の内側を埋める
 
@@ -71,7 +76,11 @@ Solidify は最後まで適用しないこと。
 **次へ**: パネル下の結果行に、繋いだ端の数・張った領域数・作った桟の数が出ます。
 Mirror を見て、面の流れが破綻していないことを確認してください。
 
-<!-- screenshot: Faces パネル（Edit Mode 側）と Connect / Connect Rows の結果 -->
+![Faces パネル（Edit Mode 側）と、Auto Fill で型紙の内側にクワッドが敷かれた状態。](../images/03_faces_connect.png)
+
+**Subdivide** は 2D で割ってから 3D へ投影し直すので、解像度を上げてもシルエットが崩れません。
+
+![Subdivide の前後。粗いクワッドのジャケットが、シルエットを保ったまま分割されて密度が上がる。](../images/03_subdivide.gif)
 
 ## 5. 3D View — 3D で確認して確定する
 
@@ -104,7 +113,7 @@ Mirror を見て、面の流れが破綻していないことを確認してく�
 Mirror 側だけ隠しても Retopo には返りませんし、次の同期で Retopo の状態に戻されます。
 Blender は Edit Mode でしか隠しを描画しないので、**Mirror が Object Mode のときは見た目は変わりません**（フラグは入っているので、Tab で入れば隠れています）。
 
-<!-- screenshot: 3D View パネルと Mirror が Guide の上に乗った状態 -->
+![3D View パネルと、平面の Retopo から作られた 3D の Mirror。アウトライナーの `Retopology_AC93DMirror` がその実体。](../images/03_3dview_mirror.png)
 
 ## 6. Guide Maps — 診断ベイク（任意）
 
@@ -121,7 +130,7 @@ Blender は Edit Mode でしか隠しを描画しないので、**Mirror が Obj
 **次へ**: マップが見えていること。見えないときは **Solid** の欄が **Texture** になっているか、**Retopology** オーバーレイが入っているかを確認してください（Preview Plane は Retopo の 5 mm 下にあります）。
 進捗はベイク中の段階表示のみで、Blender のベイク本体（`bpy.ops.object.bake`）は途中の割合を返さないため、その区間は止まって見えます。
 
-<!-- screenshot: Guide Maps パネルと Preview Plane に表示された Residual Map -->
+![Guide Maps パネル（Residual / Sag / Drape の Bake と Preview の切り替え）。](../images/03_guide_maps_panel.png)
 
 ## 7. 片付け
 
