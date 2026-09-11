@@ -100,13 +100,32 @@ class AC9_PT_MirrorView(bpy.types.Panel):
 
 
 def draw_faces_object_tools(layout, context, top):
-    """Faces panel, Object Mode: real subdivision."""
+    """Faces panel, Object Mode: reversible preview + real subdivision."""
     from ..uv_seam_guide.gpu_overlay import _cache as seam_cache
 
-    row = uic.labeled_row(layout, "Subdivide")
+    props = top.proj
+    retopo = top.retopo_obj
+    mirror = mirror_mod.find_mirror(retopo)
+    levels = mirror_mod.preview_levels(mirror)
+    dirty = mirror_mod.preview_is_dirty(mirror)
+
+    row = uic.labeled_row(layout, "Levels")
+    row.prop(props, "subdiv_preview_levels", text="")
+
+    row = uic.labeled_row(layout, "Preview")
     row.scale_y = 1.2
-    row.operator("ac9_cloth.subdivide_retopo", text="Subdivide",
-                 icon="MOD_SUBSURF")
+    row.operator(
+        "ac9_cloth.toggle_subdiv_preview",
+        text="Preview (stale)" if levels > 0 and dirty else "Preview",
+        icon="HIDE_OFF",
+        depress=(levels > 0 and not dirty),
+    )
+
+    row = uic.labeled_row(layout, "Commit")
+    row.scale_y = 1.2
+    op = row.operator("ac9_cloth.subdivide_retopo", text="Subdivide",
+                      icon="MOD_SUBSURF")
+    op.levels = props.subdiv_preview_levels
 
     # Soft prerequisite: Subdivide still runs without the seam analysis, but
     # then it cannot snap the new boundary vertices onto the Guide outline.

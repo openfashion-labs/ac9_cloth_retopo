@@ -341,6 +341,8 @@ _UI_STRINGS = {
     "No seams: Subdivide skips the snap": "Seams なし: Subdivide はスナップを省略します",
     "Object Mode tools": "Object Mode のツール",
     "Preview": "プレビュー",
+    "Preview (stale)": "プレビュー（要更新）",
+    "Commit": "確定",
     "Regions": "領域",
     "Rows": "Rows",
     "Select": "選択",
@@ -739,6 +741,8 @@ _UI_STRINGS = {
         "手順 3。Inset Line の後に実行します。各型紙について: 輪郭から Width より近い頂点を吸収し（輪郭上に collapse）、続いて輪郭を Width だけインセットして、縫い Seam でもフリー辺でも輪郭に平行な頂点列を走らせます。いわゆる「輪郭に平行な内部線」の手法を、CLO の生書き出しに対して Blender 上で、平面シェイプキー上で行います。Object Mode",
     "Subdivide the retopo in 2D (simple/linear), snap new boundary verts to the Guide seam lines, then re-project to 3D. Because the new verts are projected onto the Guide surface, the result follows the garment shape — no smoothing needed. Destructive: bumps resolution permanently. Runs in the 2D state only — press 'Sync 3D > 2D' first if you are in 3D":
         "retopo を 2D で（単純／線形に）Subdivide し、新しい外周頂点を Guide の Seam 線にスナップしてから 3D へ再投影します。新しい頂点は Guide 表面に投影されるため、結果は衣装の形状に沿います — スムーズ処理は不要です。破壊的です: 解像度が恒久的に上がります。2D 状態でのみ動きます — 3D にいる場合は先に 'Sync 3D > 2D' を押してください",
+    "Show or hide a reversible, Guide-projected subdivision preview on the Mirror. The 2D Retopo is not changed":
+        "Guide に再投影した可逆な Subdivide プレビューを Mirror に表示／非表示します。2D Retopo は変更しません",
     "Take the moves you made to existing vertices on the Mirror, snap them onto the Guide surface, and rewrite the 2D retopo layout to match (boundary verts stay pinned to the CLO outline). Move-only: do NOT add verts or cut on the mirror — new geometry must be made in 2D. The mirror is rebuilt to the clean snapped result afterwards":
         "Mirror 上で既存の頂点に加えた移動を取り込み、Guide 表面にスナップして、2D retopo レイアウトを合わせて書き換えます（外周頂点は CLO の輪郭に固定されたままです）。移動のみです: Mirror 上で頂点を追加したりカットしたりしないでください — 新しいジオメトリは 2D で作ります。その後 Mirror はスナップ済みのきれいな結果に作り直されます",
     "Take the retopo's current 3D ShapeKey state, snap each vertex to the nearest point on Guide 3D (Basis), and rewrite the 2D Basis layout to match. Both Basis and ShapeKey are updated so they stay consistent":
@@ -854,6 +858,8 @@ _UI_STRINGS = {
         "内部の格子が輪郭からどれだけ離れるか、Fill 間隔に対する比率で指定します。小さすぎると境界のクワッドが細片になります",
     "How many times to subdivide (each level doubles edge resolution)":
         "Subdivide の回数（1 レベルごとに辺の解像度が 2 倍になります）",
+    "Subdivision levels shared by the reversible Mirror preview and the destructive Subdivide operation":
+        "可逆な Mirror プレビューと破壊的な Subdivide 操作で共有する分割レベル",
     "How many vertices per side, counting both anchors": "片側あたりの頂点数（両端の Anchor を含む）",
     "How many vertices to add (negative removes)": "追加する頂点数（負の値で削除）",
     "How much the four side curves are smoothed before the grid is mapped onto them. The boundary vertices never move — this only stops a zigzag hem from printing itself onto every interior row. 0 follows the outline exactly":

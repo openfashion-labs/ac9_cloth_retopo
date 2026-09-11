@@ -12,7 +12,7 @@ UV seam lines, which benefit from always-on-top line rendering.
 """
 
 import bpy
-from bpy.props import BoolProperty, FloatProperty, StringProperty
+from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty
 from bpy.types import Object, PropertyGroup
 
 _ISLAND_MAT_NAME = "AC9_Island_Colors"
@@ -29,6 +29,14 @@ def _tag_redraw_3d_prop(self, context):
     """Redraw all 3D viewports when a draw-only property changes."""
     from .selection_overlay import invalidate_selection
     invalidate_selection()
+
+
+def _mark_subdiv_preview_dirty(self, context):
+    """A changed level makes the currently displayed preview stale."""
+    from . import mirror
+    top = getattr(getattr(context, "scene", None), "ac9_cloth_retopo", None)
+    if top is not None:
+        mirror.mark_preview_dirty(top.retopo_obj)
 
 
 def _boundary_update(self, context):
@@ -109,6 +117,18 @@ class AC9CloProjectorProps(PropertyGroup):
         min=2.0,
         soft_max=24.0,
         update=_tag_redraw_3d_prop,
+    )
+
+    subdiv_preview_levels: IntProperty(
+        name="Levels",
+        description=(
+            "Subdivision levels shared by the reversible Mirror preview and "
+            "the destructive Subdivide operation"
+        ),
+        default=1,
+        min=1,
+        max=4,
+        update=_mark_subdiv_preview_dirty,
     )
 
     show_experimental: BoolProperty(

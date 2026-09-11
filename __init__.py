@@ -260,6 +260,7 @@ def _on_guide_changed(self, context):
     uv_seam_guide.gpu_overlay.reset_guide_derived(scene)
     clo_projector.gpu_overlay.reset_guide_derived()
     clo_projector.selection_overlay.invalidate_selection()
+    clo_projector.mirror.mark_preview_dirty(self.retopo_obj)
     # The projector's triangle/BVH cache and the symmetry/twin memo caches are
     # keyed on the mesh's session_uid, so the new Guide cannot read the old
     # one's entries and they are deliberately NOT flushed here: swapping back
@@ -315,6 +316,7 @@ def _on_flat_sk_changed(self, context):
     scene = getattr(context, "scene", None)
     uv_seam_guide.gpu_overlay.reset_guide_derived(scene)
     clo_projector.gpu_overlay.reset_guide_derived()
+    clo_projector.mirror.mark_preview_dirty(self.retopo_obj)
     # Remember it for this Guide, so coming back to this garment does not ask
     # for the key again (see FLAT_SK_PROP).
     guide = self.guide_obj
@@ -374,6 +376,7 @@ def _update_guide_3d_source(self, context):
     if guide is None or guide.type != 'MESH':
         return
     clo_projector.core.invalidate_guide_cache(guide)
+    clo_projector.mirror.mark_preview_dirty(self.retopo_obj)
     guide_separate.core.sync_separated_value(
         guide, self.guide_flat_shapekey, self.guide_3d_source == 'SEPARATED')
     clo_projector.gpu_overlay.invalidate()
