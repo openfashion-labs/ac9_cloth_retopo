@@ -45,7 +45,27 @@ CLO/Marvelous Designerで作ったドレープメッシュを、Blenderでのリ
 - どの章を見るか: `04_panels.md`（ボタン別リファレンス・パネルの並び順）、`03_workflow.md`（手順そのものが変わる変更）、`06_troubleshooting.md`（エラーメッセージの文言）、`05_experimental.md`（Experimental の増減）、`01_concepts.md`（用語の変更）。
 - **2 言語は必ず対で直す。** 片方だけのコミットは差分の非対称としてレビューで弾く。
 - ボタン名の翻訳は `translations.py`（ja_JP）にある。ラベルを変えたら翻訳キーも一緒に直す（キーは英語リテラル完全一致）。
-- 画像は `docs/images/` に置き、`blender_manifest.toml` の `paths_exclude_pattern` に同ディレクトリを足して配布 ZIP から外す（ZIP は wheels だけで既に 22MB）。UIのスクリーンショットは PNG（JPEG は文字の縁にリンギングが出る）。
+- 画像は `docs/images/` に置く。配布 ZIP からは `blender_manifest.toml` の `paths_exclude_pattern` の `/docs/images/` で除外済み（ZIP は wheels だけで既に 22MB）。
+
+### docs/images の決まり
+- **ファイル名は最終形を最初から付ける。** `<章番号>_<内容>`・ASCII 小文字・`_` 区切り
+  （`03_faces_connect.png`、`04_overlays_panel.png`）。GIF は拡張子で判る。
+  **撮る／書き出す時点でこの名前で `docs/images/` へ直接保存する**（Blender なら
+  Window > Save Screenshot で保存先とファイル名を指定できる）。別名で撮って後からリネームすると、
+  誰かが中身を見て突き合わせる工程が毎回発生する。
+- **名前は「本当に写っているもの」に合わせる。** 撮る前に決めた名前と中身がずれたら、名前の方を直す
+  （実例: Seam Status を緑にせずに撮った物は `..._status_green` ではなく `..._panel`）。
+  嘘の名前は、次に触る人が中身を確認しないまま本文を書く原因になる。
+- **UI スクリーンショットは PNG。** JPEG は文字の縁にリンギングが出る。レンダーや写真は JPEG でよい。
+- **撮影は既定状態で。** Experimental tools は OFF（05 章の図だけ ON）、テーマは Blender 既定、
+  UI は英語（ja のマニュアルも本文中のボタン名は英語表記なので、日本語 UI で撮ると本文と食い違う）。
+- **幅は 1200〜1800px 目安。** GitHub は本文を約 860px で描くので、全画面 4K を貼ると
+  パネルの文字が消える。撮ったら 900px に縮めて読めるか確かめる。
+- 画像を足したら **`../check_docs_images.py`**（リポジトリ外、案件フォルダ直下）を実行する。
+  リンク切れ・未参照の画像・ja/en の枚数不一致・未撮影のプレースホルダ・幅の過不足を、
+  画像を開かずに検出する。見た目の確認は VS Code で md を開いて `Ctrl+Shift+V`。
+- 撮れていない箇所は `<!-- screenshot: ... -->` の HTML コメントのまま残す。
+  GitHub では何も表示されず、リンク切れにもならない。
 
 ## 公開に向けて守ること
 - **絶対パス・個人名・顧客名や商品名を、コード・コメント・コミットメッセージ・PR文面に書かない。** このリポジトリは一般公開される

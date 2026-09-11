@@ -2,6 +2,8 @@
 
 # AC9 Cloth Retopo
 
+![AC9 Cloth Retopo - a garment shown as a low-poly retopology wireframe next to the finished shaded result](docs/images/readme_hero.png)
+
 A Blender add-on for retopologizing garment meshes made in CLO / Marvelous Designer, while staying in the flattened pattern shape (2D).
 The 3D shape is obtained by projecting the flat retopo onto the high-poly Guide using barycentric coordinates. Editing always happens in 2D; 3D is a view-only mirror.
 

@@ -312,7 +312,7 @@ The **Seam Status** toggle only ever comes on with the **Status** preset, and wh
 
 Most of this is drawn from the cache that **Analyze Seams** fills. That cache is emptied on file load and Reload Scripts, so when it's empty this panel also shows "Seams not analyzed" with an **Analyze** button.
 
-<!-- screenshot: the Overlays panel (presets and each toggle box) -->
+![The Overlays panel: master switch, presets (Boundary / Seams / Status / 3D Check / All Off), the individual toggles, and a viewport with the overlays drawn.](../images/04_overlays_panel.png)
 
 ### Appearance (sub-panel)
 

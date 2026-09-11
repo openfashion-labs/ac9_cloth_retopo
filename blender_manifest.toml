@@ -60,6 +60,8 @@ paths_exclude_pattern = [
   "/*.zip",
   "*.blend[1-9]",
   "/CLAUDE.md",
+  # マニュアルの図版。GitHub 上で読む前提なので配布 ZIP には入れない（ZIP は wheels だけで既に 22MB）
+  "/docs/images/",
   # 社内向けの手順書。インストールした利用者には無関係なので配布物には入れない
   "/docs/team-guide.ja.md",
 ]

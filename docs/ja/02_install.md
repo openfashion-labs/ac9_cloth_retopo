@@ -26,7 +26,7 @@
 - **Overlays** ポップオーバー
 - **Refresh Mirror**
 
-<!-- screenshot: サイドバーの AC9 Cloth Retopo タブ（全パネルが畳まれた状態）とビューポートヘッダーの Overlays / Refresh Mirror -->
+![サイドバーの AC9 Cloth Retopo タブ。全パネルが畳まれ、Setup だけが開いて「Set the Guide and Flat SK first」の警告が出ている状態。](../images/02_sidebar_tab.png)
 
 ## Experimental tools スイッチ
 
@@ -34,9 +34,9 @@
 
 - **Experimental tools** — 既定 OFF
 
-これを ON にしたときだけサイドバーに現れる機能は次の 5 つです。
+これを ON にしたときだけサイドバーに現れる機能は次の 7 つです。
 
-Grid Regions, Density（Density / Even Out / Count / Spacing / Pin / Corner）, Mesh Edit, Quad Fix, Legacy Flip
+Grid Regions, Align to Outline, Mesh Edit, Quad Fix, Legacy Flip, UV Mirror（Guide Prep の 5 UV）, Density 一族（Density / Even Out / Count / Spacing / Pin / Corner）
 
 未完成の機能なので既定では隠れています。中身は [05_experimental.md](05_experimental.md) を参照してください。
 OFF のままだと、**Advanced** パネルの末尾に「Experimental tools: Edit > Preferences > Add-ons > AC9 Cloth Retopo」というヒントが出ます。

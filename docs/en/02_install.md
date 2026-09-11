@@ -26,7 +26,7 @@ This is the one deliberately duplicated spot — a place you can hit without scr
 - The **Overlays** popover
 - **Refresh Mirror**
 
-<!-- screenshot: the AC9 Cloth Retopo sidebar tab (all panels collapsed) and the Overlays / Refresh Mirror controls in the viewport header -->
+![The AC9 Cloth Retopo sidebar tab, all panels collapsed except Setup, which shows the "Set the Guide and Flat SK first" warning.](../images/02_sidebar_tab.png)
 
 ## Experimental tools switch
 
@@ -34,9 +34,9 @@ Expand **Edit > Preferences > Add-ons > AC9 Cloth Retopo** and there's exactly o
 
 - **Experimental tools** — off by default
 
-Turning it on reveals 5 features in the sidebar that are otherwise hidden:
+Turning it on reveals 7 features in the sidebar that are otherwise hidden:
 
-Grid Regions, Density (Density / Even Out / Count / Spacing / Pin / Corner), Mesh Edit, Quad Fix, Legacy Flip
+Grid Regions, Align to Outline, Mesh Edit, Quad Fix, Legacy Flip, UV Mirror (Guide Prep step 5), and the Density family (Density / Even Out / Count / Spacing / Pin / Corner)
 
 These are unfinished features, hidden by default. See [05_experimental.md](05_experimental.md) for details.
 While it's off, a hint reading "Experimental tools: Edit > Preferences > Add-ons > AC9 Cloth Retopo" appears at the bottom of the **Advanced** panel.

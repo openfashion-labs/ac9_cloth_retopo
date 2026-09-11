@@ -68,6 +68,8 @@ How sharply two faces meet across the edge between them.
 
 ## "2D is authoritative, 3D is a mirror"
 
+![How Guide, Retopo, Mirror and Final relate. Guide is one object holding both the 2D and the 3D coordinates; Retopo is always flat and is the only thing you edit; Mirror is a view-only 3D result rebuilt from Retopo plus Guide on every Refresh; Final is the deliverable.](../images/01_2d_is_truth.png)
+
 The previous approach used a single object that moved between 2D (Basis) and 3D (`AC9_3D_Project`) via a shape key value, and let you edit it in either state.
 Editing in 3D meant going through a fragile reverse-projection path (including spike repair for new vertices), and you couldn't see both the 2D layout and the 3D shape at the same time.
 

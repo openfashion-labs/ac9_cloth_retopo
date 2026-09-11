@@ -303,7 +303,7 @@ OFF にすると毎フレームの描画コールバックが冒頭で打ち切�
 
 ここのほとんどは **Analyze Seams** が埋めるキャッシュから描いています。そのキャッシュはファイル読み込みと Reload Scripts で空になるので、空のときはこのパネルにも「Seams not analyzed」と **Analyze** ボタンが出ます。
 
-<!-- screenshot: Overlays パネル（プリセットと各トグルの箱） -->
+![Overlays パネル。マスタースイッチ、プリセット（Boundary / Seams / Status / 3D Check / All Off）、各トグルと、オーバーレイが乗ったビューポート。](../images/04_overlays_panel.png)
 
 ### Appearance（子パネル）
 

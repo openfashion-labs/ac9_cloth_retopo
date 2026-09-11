@@ -98,6 +98,8 @@ Note that bake progress is only shown as staged text. The bake itself doesn't re
 
 ## Baking normals / AO externally picks up the pattern of a different surface
 
+![A normal map of a ruffle. Before Separate, the layer behind it is baked in as yellow streaks; after Separate they are gone.](../images/04_separate_before_after.gif)
+
 **Symptom**: after running Separate, a bake onto the retopo still shows the neighbouring layer's detail in the normal map, and the AO is black where it should be open. Re-running Separate or raising Gap barely changes it.
 
 There are three causes and **none of them are on the Guide's side** -- they are all bake settings. Raising Gap does not fix them.
