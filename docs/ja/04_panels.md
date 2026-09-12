@@ -163,8 +163,8 @@ Object Mode では外周全体、Edit Mode では選択した箇所を扱いま�
 | **Symmetry → Twin** | 選択頂点があるアイランドを正として、対になるもう片方のアイランドを作り直す | Guide + Retopo / 頂点を 1 つ選択 | 破壊的（対象側の頂点と面を全部消して作り直す）。実行時に Guide の対称性を再検出するので事前準備は不要。Ctrl+Z で戻せる |
 | **Symmetry → Self** | 1 枚のアイランドの、選択頂点がある側を正として、折り軸の反対側を鏡像で作り直す | 同上 / **Self axis** を先に決める | 破壊的。軸を間違えると「何も変わらない」破壊的no-opになる |
 | **Self axis** | **Self** が使う折り軸。**Auto**（左右非対称なほう＝まだ作業が残っているほうを選ぶ。両方とも同程度に非対称なら拒否）/ **Vertical axis (mirror left-right)** / **Horizontal axis (mirror top-bottom)** | — | 押す前に見えている必要がある設定なので、独立した行になっている |
-| **Levels** / **Preview** | Levels 回だけ本物の Subdivide と外形スナップ・Guide 再投影を一時複製へ行い、その結果を Mirror に表示する | Object Mode / 2D 状態 | Retopo は低解像度のまま変わらない。Preview をもう一度押すと通常の Mirror に戻る。Preview 中に Retopo や Guide を編集すると **Preview（要更新）** になり、押すと再計算する。Refresh Mirror も表示中の Preview を再計算する。キャッシュは保存しない |
-| **Commit → Subdivide** | Preview と共有する Levels でリトポを 2D で単純分割し、新しい境界頂点を Guide の縫い目線へスナップして 3D へ再投影する | Object Mode / 2D 状態のみ（`AC9_3D_Project` が表示状態だと動かない） | 破壊的で解像度が恒久的に上がり、Preview は一度外れる。新頂点も Guide 表面に投影されるのでスムーズ処理は不要。Mirror があれば通常状態で自動更新される。縫い目の解析が無い場合は動くがスナップを飛ばす（情報行で警告）。N-gon（5 角以上の面）は内部を割らずそのまま通過させ、残っている枚数だけを結果行に報告する（Blender の Subdivide の仕様。→ 06. うまく動かないとき） |
+| **Subdivision Mirror → 分割レベル / 分割表示を ON** | 指定レベルだけ本物の Subdivide と外形スナップ・Guide 再投影を一時複製へ行い、その結果を Mirror に表示する | Object Mode または Edit Mode / 2D 状態 | Facesパネルのモード別ツールの外にあり、編集中も操作できる。ONの間はカット等の編集後に **Refresh** を押しても解除されず、現在のライブ2Dメッシュから分割Mirrorを再構築する。Retopoは低解像度のまま。右端の **×** で通常Mirrorへ戻る。キャッシュは保存しない |
+| **適用 → Subdivision を適用** | 分割表示と共有する分割レベルでRetopoを2Dで単純分割し、新しい境界頂点をGuideの縫い目線へスナップして3Dへ再投影する | Object Mode / 2D状態のみ（`AC9_3D_Project`が表示状態だと動かない） | 破壊的で解像度が恒久的に上がり、この時だけ分割表示は一度外れる。新頂点もGuide表面に投影されるのでスムーズ処理は不要。Mirrorがあれば通常状態で自動更新される。縫い目の解析が無い場合は動くがスナップを飛ばす（情報行で警告）。N-gon（5角以上の面）は内部を割らずそのまま通過させ、残っている枚数だけを結果行に報告する（BlenderのSubdivideの仕様。→ 06. うまく動かないとき） |
 
 ### Edit Mode
 

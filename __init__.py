@@ -654,6 +654,13 @@ class AC9_PT_Faces(bpy.types.Panel):
         edit.label(text="Edit Mode tools")
         _draw_faces_edit_tools(edit, context, top)
 
+        # Mirror subdivision is a viewing state, not an Object/Edit mesh tool.
+        # Keep it reachable while the user cuts the low-poly Retopo; Refresh
+        # then rebuilds the subdivided Mirror from that live edit mesh.
+        layout.separator()
+        clo_projector.ui.draw_subdiv_preview(layout.column(align=True),
+                                             context, top)
+
         # Twin / Self belong to NEITHER half: they read the selected vertex in
         # either mode (their invoke reads the edit-mesh selection when the
         # retopo is in Edit Mode). While the halves swapped and only one was

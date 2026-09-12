@@ -186,6 +186,10 @@ class AC9_OT_RefreshMirror(bpy.types.Operator, _ModeSwitchMixin):
                 result, mirror = mirror_mod.refresh_mirror_editmode(
                     context, retopo, guide_obj, flat_sk,
                     progress=prog,
+                    preview_levels_override=(
+                        None if self.preview_levels_override < 0
+                        else self.preview_levels_override
+                    ),
                 )
             else:
                 def go():
@@ -974,15 +978,22 @@ class AC9_OT_ToggleSubdivPreview(bpy.types.Operator):
     bl_idname = "ac9_cloth.toggle_subdiv_preview"
     bl_label = "Toggle Subdiv Preview"
     bl_description = (
-        "Show or hide a reversible, Guide-projected subdivision preview on "
-        "the Mirror. The 2D Retopo is not changed"
+        "Show or hide a reversible, Guide-projected subdivision on the "
+        "Mirror. While it is on, every Refresh rebuilds it from the current "
+        "live 2D edit mesh; the low-poly Retopo is not changed"
     )
     bl_options = {"REGISTER"}
 
+    force_off: bpy.props.BoolProperty(
+        name="Turn Off",
+        default=False,
+        options={"HIDDEN", "SKIP_SAVE"},
+    )
+
     @classmethod
     def poll(cls, context):
-        if context.mode != "OBJECT":
-            cls.poll_message_set("Subdiv Preview runs in Object Mode.")
+        if context.mode not in {"OBJECT", "EDIT_MESH"}:
+            cls.poll_message_set("Subdiv Preview runs in Object or Edit Mode.")
             return False
         top = getattr(context.scene, "ac9_cloth_retopo", None)
         retopo = top.retopo_obj if top is not None else None
@@ -990,9 +1001,6 @@ class AC9_OT_ToggleSubdivPreview(bpy.types.Operator):
             cls.poll_message_set("Set the Retopo first.")
             return False
         mirror = mirror_mod.find_mirror(retopo)
-        if mirror is not None and mirror.mode != "OBJECT":
-            cls.poll_message_set("Exit the Mirror's Edit Mode first.")
-            return False
         shape_keys = retopo.data.shape_keys
         if (shape_keys is not None
                 and core.SHAPEKEY_NAME in shape_keys.key_blocks
@@ -1008,7 +1016,7 @@ class AC9_OT_ToggleSubdivPreview(bpy.types.Operator):
         dirty = mirror_mod.preview_is_dirty(mirror)
         # A stale preview button is visually released; pressing it means
         # recompute, not hide. A current depressed preview toggles off.
-        desired = (0 if current > 0 and not dirty
+        desired = (0 if self.force_off or (current > 0 and not dirty)
                    else top.proj.subdiv_preview_levels)
         return bpy.ops.ac9_cloth.refresh_mirror(
             preview_levels_override=desired

@@ -604,7 +604,8 @@ def _write_mirror_editmode(mirror, new_world, src2d_local, faces, hidden):
     bmesh.update_edit_mesh(mirror.data, loop_triangles=True, destructive=True)
 
 
-def refresh_mirror_editmode(context, retopo, guide_obj, flat_sk, progress=None):
+def refresh_mirror_editmode(context, retopo, guide_obj, flat_sk, progress=None,
+                            preview_levels_override=None):
     """Refresh while one or both of {retopo, mirror} are in Edit Mode — the
     "both in Edit Mode" flow: click on the 3D mirror, edit on the 2D retopo,
     press Refresh, all without ever leaving Edit Mode.
@@ -629,6 +630,61 @@ def refresh_mirror_editmode(context, retopo, guide_obj, flat_sk, progress=None):
     if n == 0:
         return ProjectionResult(success=False, error="Retopo has no vertices."), None
 
+    old_mirror = find_mirror(retopo)
+    levels = (preview_levels(old_mirror) if preview_levels_override is None
+              else max(0, int(preview_levels_override)))
+
+    # A preview is a pure function of the LIVE 2D edit mesh.  Build a
+    # disposable object from that bmesh snapshot, run the same production
+    # Subdivide pipeline as Commit, then write only the Mirror.  The helper
+    # briefly leaves and restores Edit Mode because bpy.ops.mesh.subdivide
+    # requires an active edit object; the authoritative Retopo is never
+    # subdivided or otherwise rewritten by this path.
+    if levels > 0:
+        tmp_mesh = bpy.data.meshes.new("AC9_SubdivPreview_Temp")
+        tmp_obj = bpy.data.objects.new("AC9_SubdivPreview_Temp", tmp_mesh)
+        collection = (retopo.users_collection[0] if retopo.users_collection
+                      else context.scene.collection)
+        collection.objects.link(tmp_obj)
+        tmp_obj.matrix_world = retopo.matrix_world.copy()
+        try:
+            source_inv = retopo.matrix_world.inverted()
+            tmp_mesh.from_pydata(
+                [source_inv @ point for point in points_world], [], faces)
+            tmp_mesh.update()
+
+            from .operators import subdivide_and_project
+            preview_result, _n_old, n_new, _snapped = subdivide_and_project(
+                context, tmp_obj, guide_obj, flat_sk,
+                levels=levels, snap_boundary=True, snap_distance=0.02,
+                progress=progress,
+            )
+            if not preview_result.success:
+                return preview_result, old_mirror
+
+            preview_faces = [tuple(p.vertices) for p in tmp_mesh.polygons]
+            shape = tmp_mesh.shape_keys.key_blocks[core.SHAPEKEY_NAME]
+            preview_world = [tmp_obj.matrix_world @ shape.data[i].co
+                             for i in range(n_new)]
+            src2d_local = get_basis_local(tmp_obj)
+            mirror = find_mirror(retopo)
+            if mirror is not None and mirror.mode == "EDIT":
+                _write_mirror_editmode(
+                    mirror, preview_world, src2d_local, preview_faces, None)
+            else:
+                mirror = _ensure_mirror_topology(
+                    context, retopo, n_new, preview_faces)
+                inv = mirror.matrix_world.inverted()
+                _write_coords_local(mirror, [inv @ p for p in preview_world])
+                _write_src2d_mesh(mirror, src2d_local)
+            _set_preview_state(mirror, levels)
+            return preview_result, mirror
+        finally:
+            if tmp_obj.name in bpy.data.objects:
+                bpy.data.objects.remove(tmp_obj, do_unlink=True)
+            if tmp_mesh.name in bpy.data.meshes and tmp_mesh.users == 0:
+                bpy.data.meshes.remove(tmp_mesh)
+
     new_world, attachments, failed = core.compute_forward_world(
         points_world, guide_obj, flat_sk, progress=progress
     )
@@ -637,7 +693,7 @@ def refresh_mirror_editmode(context, retopo, guide_obj, flat_sk, progress=None):
     hidden = _read_hidden(retopo)
     retopo_inv = retopo.matrix_world.inverted()
     src2d_local = [retopo_inv @ point for point in points_world]
-    mirror = find_mirror(retopo)
+    mirror = old_mirror
     if mirror is not None and mirror.mode == "EDIT":
         _write_mirror_editmode(mirror, new_world, src2d_local, faces, hidden)
     else:
@@ -647,8 +703,7 @@ def refresh_mirror_editmode(context, retopo, guide_obj, flat_sk, progress=None):
         _write_src2d_mesh(mirror, src2d_local)
         _apply_hidden_mesh(mirror, hidden)
 
-    # Edit-mode Refresh always returns to the base topology. Preview generation
-    # needs the Object-mode operator pipeline and is exposed only there.
+    # The ordinary (non-preview) Mirror is explicitly recorded as base state.
     _set_preview_state(mirror, 0)
 
     return (

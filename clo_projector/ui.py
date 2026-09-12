@@ -99,31 +99,42 @@ class AC9_PT_MirrorView(bpy.types.Panel):
         uic.draw_hint(layout, "New <Retopo>_Final: 3D shape, UV = 2D layout, no ShapeKeys")
 
 
-def draw_faces_object_tools(layout, context, top):
-    """Faces panel, Object Mode: reversible preview + real subdivision."""
-    from ..uv_seam_guide.gpu_overlay import _cache as seam_cache
-
+def draw_subdiv_preview(layout, context, top):
+    """Persistent Mirror detail preview, usable while editing the Retopo."""
     props = top.proj
     retopo = top.retopo_obj
     mirror = mirror_mod.find_mirror(retopo)
     levels = mirror_mod.preview_levels(mirror)
     dirty = mirror_mod.preview_is_dirty(mirror)
 
-    row = uic.labeled_row(layout, "Levels")
+    layout.label(text="Subdivision Mirror")
+    row = uic.labeled_row(layout, "Detail")
     row.prop(props, "subdiv_preview_levels", text="")
 
-    row = uic.labeled_row(layout, "Preview")
+    row = uic.labeled_row(layout, "Mirror")
     row.scale_y = 1.2
     row.operator(
         "ac9_cloth.toggle_subdiv_preview",
-        text="Preview (stale)" if levels > 0 and dirty else "Preview",
-        icon="HIDE_OFF",
+        text=("Update Subdivided" if levels > 0 and dirty
+              else "Show Subdivided" if levels <= 0
+              else "Subdivided"),
+        icon="MOD_SUBSURF",
         depress=(levels > 0 and not dirty),
     )
+    if levels > 0:
+        row.operator("ac9_cloth.toggle_subdiv_preview", text="", icon="X").force_off = True
+    uic.draw_hint(layout, "Stays on when Refresh rebuilds the Mirror; Retopo stays low-poly")
 
-    row = uic.labeled_row(layout, "Commit")
+
+def draw_faces_object_tools(layout, context, top):
+    """Faces panel, Object Mode: destructive subdivision."""
+    from ..uv_seam_guide.gpu_overlay import _cache as seam_cache
+
+    props = top.proj
+
+    row = uic.labeled_row(layout, "Apply")
     row.scale_y = 1.2
-    op = row.operator("ac9_cloth.subdivide_retopo", text="Subdivide",
+    op = row.operator("ac9_cloth.subdivide_retopo", text="Apply Subdivision",
                       icon="MOD_SUBSURF")
     op.levels = props.subdiv_preview_levels
 

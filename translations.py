@@ -741,8 +741,16 @@ _UI_STRINGS = {
         "手順 3。Inset Line の後に実行します。各型紙について: 輪郭から Width より近い頂点を吸収し（輪郭上に collapse）、続いて輪郭を Width だけインセットして、縫い Seam でもフリー辺でも輪郭に平行な頂点列を走らせます。いわゆる「輪郭に平行な内部線」の手法を、CLO の生書き出しに対して Blender 上で、平面シェイプキー上で行います。Object Mode",
     "Subdivide the retopo in 2D (simple/linear), snap new boundary verts to the Guide seam lines, then re-project to 3D. Because the new verts are projected onto the Guide surface, the result follows the garment shape — no smoothing needed. Destructive: bumps resolution permanently. Runs in the 2D state only — press 'Sync 3D > 2D' first if you are in 3D":
         "retopo を 2D で（単純／線形に）Subdivide し、新しい外周頂点を Guide の Seam 線にスナップしてから 3D へ再投影します。新しい頂点は Guide 表面に投影されるため、結果は衣装の形状に沿います — スムーズ処理は不要です。破壊的です: 解像度が恒久的に上がります。2D 状態でのみ動きます — 3D にいる場合は先に 'Sync 3D > 2D' を押してください",
-    "Show or hide a reversible, Guide-projected subdivision preview on the Mirror. The 2D Retopo is not changed":
-        "Guide に再投影した可逆な Subdivide プレビューを Mirror に表示／非表示します。2D Retopo は変更しません",
+    "Show or hide a reversible, Guide-projected subdivision on the Mirror. While it is on, every Refresh rebuilds it from the current live 2D edit mesh; the low-poly Retopo is not changed":
+        "Guide に再投影した可逆な Subdivision を Mirror に表示／非表示します。ON の間は Refresh のたびに現在の 2D 編集メッシュから再構築し、低解像度の Retopo は変更しません",
+    "Subdivision Mirror": "Subdivision Mirror",
+    "Detail": "分割レベル",
+    "Show Subdivided": "分割表示を ON",
+    "Update Subdivided": "分割表示を更新",
+    "Subdivided": "分割表示 ON",
+    "Stays on when Refresh rebuilds the Mirror; Retopo stays low-poly":
+        "Refresh 後も分割表示を維持します。Retopo は低解像度のままです",
+    "Apply Subdivision": "Subdivision を適用",
     "Take the moves you made to existing vertices on the Mirror, snap them onto the Guide surface, and rewrite the 2D retopo layout to match (boundary verts stay pinned to the CLO outline). Move-only: do NOT add verts or cut on the mirror — new geometry must be made in 2D. The mirror is rebuilt to the clean snapped result afterwards":
         "Mirror 上で既存の頂点に加えた移動を取り込み、Guide 表面にスナップして、2D retopo レイアウトを合わせて書き換えます（外周頂点は CLO の輪郭に固定されたままです）。移動のみです: Mirror 上で頂点を追加したりカットしたりしないでください — 新しいジオメトリは 2D で作ります。その後 Mirror はスナップ済みのきれいな結果に作り直されます",
     "Take the retopo's current 3D ShapeKey state, snap each vertex to the nearest point on Guide 3D (Basis), and rewrite the 2D Basis layout to match. Both Basis and ShapeKey are updated so they stay consistent":
