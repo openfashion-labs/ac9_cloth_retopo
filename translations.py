@@ -315,8 +315,8 @@ _UI_STRINGS = {
     # ---- ui_common row labels, hints and blockers ----
     "1 Flat SK": "1 Flat SK",
     "2 Folds": "2 折れ線",
-    "3 Lines": "3 Line",
-    "4 Pieces": "4 Pieces",
+    "3 Pieces": "3 Pieces",
+    "4 Lines": "4 Line",
     "Align": "整列",
     "Apply": "適用",
     "Attachments": "アタッチメント",
@@ -391,7 +391,6 @@ _UI_STRINGS = {
     "Edge Clearance": "外周からの余白",
     "Experimental tools": "Experimental ツール",
     "Experimental: in-place 3D edit": "Experimental: 3D 直接編集",
-    "Extend Along Fold": "折れ線に沿って延長",
     "Extend Selected": "選択から延長",
     "Faces Result": "Faces 結果",
     "Fill Mismatched Regions": "不一致の領域も Fill",
@@ -401,7 +400,6 @@ _UI_STRINGS = {
     "Fold Axis": "折り軸",
     "Fold Line Color": "折れ線の色",
     "Fold Line Width (px)": "折れ線の太さ (px)",
-    "Fold Min Angle": "折れ最小角度",
     "Gap": "隙間",
     "Generate": "生成",
     "Ghost Cross Size": "Ghost 十字サイズ",
@@ -418,7 +416,6 @@ _UI_STRINGS = {
     "Include Solidify": "Solidify を含める",
     "Kind": "種類",
     "Levels": "分割レベル",
-    "Line Profile": "線のプロファイル",
     "Live Ghost Update": "Ghost をライブ更新",
     "Marked Seam Distance": "マーク Seam 距離",
     "Marked Seams (Sharp)": "マーク Seam (Sharp)",
@@ -735,10 +732,10 @@ _UI_STRINGS = {
         "選択した各 retopo 頂点を、Snap Distance 以内にある最も近い Ghost にぴったりスナップします（G の Ghost Snap と同じ半径）。非破壊的です: 範囲内に Ghost がない選択頂点と、選択されていない頂点はすべて手つかずです。だいたいの位置に置いたまま正確なスナップを忘れた Seam を仕上げるのに使います。フリー辺の Ghost は、その頂点が載るべき輪郭上の点で、前回 Refresh 時点に固定されています: ドラッグに追従しないので、裾に沿って頂点をずらすには Outline Snap を使ってください",
     "Step 1. Tag every edge whose two faces meet at Crease Min Angle or more as a crease (fold lines and, on a mesh that already has thickness, its rim edges at 90 degrees). With a planar shape key, measured on the Basis shape regardless of which key is displayed. A live Solidify modifier is not seen here, and that is fine: its rims are built from the outline the Inset step has already regularised":
         "手順 1。2 つの面が Crease Min Angle 以上で交わる辺をすべてクリースとしてタグ付けします（折れ線と、すでに厚みのあるメッシュならその 90 度のリム辺）。平面シェイプキーがある場合、どのキーが表示されているかに関わらず Basis 形状で測ります。ライブの Solidify モディファイアはここでは見えませんが、それで問題ありません: そのリムは Inset 手順ですでに整えた輪郭から作られるからです",
-    "Step 2. Inset a fold line to both sides: absorb every original vertex closer than Width onto it, then bevel the line into two rows parallel to it at Width on each side, with the crease itself kept as the middle row. Uses the selected vertices when 2 or more are selected (walked outward with Extend Along Fold); otherwise the crease edges tagged by Find Folds. Run before Inset Pieces (the band needs to reach an outline that has not been inset yet). Edit Mode":
-        "手順 2。折れ線を両側にインセットします: Width より近い元の頂点をすべて折れ線に吸収し、続いて線を両側 Width の位置に平行な 2 列へベベルし、クリース自体は中央の列として残します。2 つ以上の頂点が選択されていればそれを使い（Extend Along Fold で外側へ辿ります）、そうでなければ Find Folds がタグ付けしたクリース辺を使います。Inset Pieces より先に実行してください（帯はまだインセットされていない輪郭まで届く必要があります）。Edit Mode",
-    "Step 3. Run after Inset Line. For every pattern piece: absorb the vertices closer than Width to the outline (collapsed onto the outline), then inset the outline by Width so a vertex row runs parallel to it, seams and free edges alike. The parallel-internal-line trick, done in Blender on the raw CLO export, on the flat shape key. Object Mode":
-        "手順 3。Inset Line の後に実行します。各型紙について: 輪郭から Width より近い頂点を吸収し（輪郭上に collapse）、続いて輪郭を Width だけインセットして、縫い Seam でもフリー辺でも輪郭に平行な頂点列を走らせます。いわゆる「輪郭に平行な内部線」の手法を、CLO の生書き出しに対して Blender 上で、平面シェイプキー上で行います。Object Mode",
+    "Step 3. Run after Inset Pieces. Inset a fold line to both sides: a band Width wide on each side of the line is rebuilt as triangles, with the fold's own vertices and edges left exactly where they are. Uses the SELECTED EDGES (each connected run is one line); with nothing selected, the crease edges tagged by Find Folds. The band stops at the row Inset Pieces left along the outline. Edit Mode":
+        "手順 3。Inset Pieces の後に実行します。折れ線を両側にインセットします: 線の左右それぞれ Width の幅の帯を三角形として張り直し、折れ線自身の頂点と辺はその場に残します。選択された「辺」を使い（つながった 1 本が 1 つの線）、何も選択されていなければ Find Folds がタグ付けしたクリース辺を使います。帯は Inset Pieces が輪郭沿いに残した行で止まります。Edit Mode",
+    "Step 2. Run before Inset Line. For every pattern piece: offset the outline inward by Width on the flat shape key and rebuild the ring between the two as triangles, so a vertex row runs parallel to the outline, seams and free edges alike. Nothing is welded, so every outline vertex survives and the sewn pairs stay matched. The parallel-internal-line trick, done in Blender on the raw CLO export. Object Mode":
+        "手順 2。Inset Line より先に実行します。各型紙について: 平面シェイプキー上で輪郭を Width だけ内側へオフセットし、その間のリングを三角形として張り直します。縫い Seam でもフリー辺でも区別なく、輪郭に平行な頂点列が走ります。頂点を溶接しないので、輪郭の頂点は 1 つも消えず、縫い合わせのペアも対応したまま保たれます。いわゆる「輪郭に平行な内部線」の手法を、CLO の生書き出しに対して Blender 上で行います。Object Mode",
     "Subdivide the retopo in 2D (simple/linear), snap new boundary verts to the Guide seam lines, then re-project to 3D. Because the new verts are projected onto the Guide surface, the result follows the garment shape — no smoothing needed. Destructive: bumps resolution permanently. Runs in the 2D state only — press 'Sync 3D > 2D' first if you are in 3D":
         "retopo を 2D で（単純／線形に）Subdivide し、新しい外周頂点を Guide の Seam 線にスナップしてから 3D へ再投影します。新しい頂点は Guide 表面に投影されるため、結果は衣装の形状に沿います — スムーズ処理は不要です。破壊的です: 解像度が恒久的に上がります。2D 状態でのみ動きます — 3D にいる場合は先に 'Sync 3D > 2D' を押してください",
     "Show or hide a reversible, Guide-projected subdivision on the Mirror. While it is on, every Refresh rebuilds it from the current live 2D edit mesh; the low-poly Retopo is not changed":
@@ -775,8 +772,6 @@ _UI_STRINGS = {
         "Anchor マーカーの腕の長さ（平面レイアウトのワールド単位）",
     "Arm length of the boundary-vert cross marker (world units)":
         "Boundary 頂点の十字マーカーの腕の長さ（ワールド単位）",
-    "Before repairing, walk from the two ends of the selection along the fold line (following the crease and its direction, jumping over missing edges), so two selected vertices are enough to repair the whole line. Off: only the selected vertices are repaired":
-        "修復の前に、選択範囲の両端から折れ線に沿って（クリースとその方向を辿り、欠けた辺は飛び越えて）歩きます。これで頂点 2 つの選択だけで線全体を修復できます。OFF: 選択した頂点だけを修復します",
     "Cell size for the structured grid, in mm of fabric (converted into the flat layout the retopo lives in). 0 follows the boundary Spacing above":
         "構造グリッドのセルサイズ。単位は布の実寸 mm（retopo が住む平面レイアウトへ変換されます）。0 にすると上の境界 Spacing に従います",
     "Clear every corner on the mesh, not just the selection":
@@ -850,8 +845,8 @@ _UI_STRINGS = {
         "Find Folds は、2 つの面がこの角度（度）以上で交わる辺をすべてマークします。60 なら Solidify のリム（90 度）と押さえた折れを拾い、ドレープのしわは拾いません",
     "Half-width of the density-pin squares (flat-layout world units)":
         "密度 Pin の四角マーカーの半幅（平面レイアウトのワールド単位）",
-    "Half-width of the inset, in real fabric distance: the new vertex row is placed this far in from the outline (Inset Pieces) or on each side of a fold line (Inset Line), and every original vertex closer than this is absorbed first. Larger = softer shading gradient. The inset runs on the flat layout, whose scale depends on how the UV is packed, so the value is converted before use — 1 mm is 1 mm of cloth either way. The report shows the band as a multiple of the outline's own vertex spacing; about 0.5x is the normal working point":
-        "インセットの半幅（布の実寸）: 新しい頂点列は輪郭からこの距離だけ内側（Inset Pieces）または折れ線の両側（Inset Line）に置かれ、これより近い元の頂点はすべて先に吸収されます。大きくするとシェーディングのグラデーションが緩やかになります。インセットは平面レイアウト上で走り、その倍率は UV の詰め方で変わるので、値は使用前に変換されます——どちらの詰め方でも 1mm は布の 1mm です。レポートには帯の幅が輪郭の頂点間隔の何倍かが出ます。0.5 倍前後が通常の動作点です",
+    "Half-width of the inset, in real fabric distance: the new vertex row is placed this far in from the outline (Inset Pieces) or on each side of a fold line (Inset Line), and the original geometry inside that band is replaced by new triangles. Larger = softer shading gradient. The inset runs on the flat layout, whose scale depends on how the UV is packed, so the value is converted before use — 1 mm is 1 mm of cloth either way. The report shows the band as a multiple of the outline's own vertex spacing; about 0.5x is the normal working point":
+        "インセットの半幅（布の実寸）: 新しい頂点列は輪郭からこの距離だけ内側（Inset Pieces）または折れ線の両側（Inset Line）に置かれ、その帯の中にあった元のジオメトリは新しい三角形に置き換えられます。大きくするとシェーディングのグラデーションが緩やかになります。インセットは平面レイアウト上で走り、その倍率は UV の詰め方で変わるので、値は使用前に変換されます——どちらの詰め方でも 1mm は布の 1mm です。レポートには帯の幅が輪郭の頂点間隔の何倍かが出ます。0.5 倍前後が通常の動作点です",
     "Half-width of the topology-corner diamonds (flat-layout world units)":
         "トポロジー Corner のひし形マーカーの半幅（平面レイアウトのワールド単位）",
     "How close a retopo boundary vertex must be to a Guide seam to count as sitting on it. Vertices further away are cuts through the middle of a panel and are left alone. In real fabric distance: the test runs in the flat layout, whose scale depends on the UV packing, so the value is converted before use":
@@ -880,8 +875,6 @@ _UI_STRINGS = {
         "「最良の」対角線の折れがこれを下回るなら、そのクワッドは単純な曲がりで、その対角線で分割すれば見た目上平坦になります（クリーン）。これを超えると本当のサドル／ねじれで、どう切っても折れが残ります",
     "Include the detected fold (centre) lines as snap targets in Outline Snap, so the centre column of retopo verts can land cleanly on a cut-on-fold line. Fold lines sit at island centres, far from the outline, so this won't pull boundary verts off the pattern edge":
         "検出した折れ（中心）線も Outline Snap のスナップ対象に含め、retopo 頂点の中央列がわ裁ち線にきれいに載るようにします。折れ線はアイランドの中心にあって輪郭から遠いので、外周頂点が型紙の縁から引き剥がされることはありません",
-    "Inset Line only. Shape of the band across the fold: 1.0 keeps the crease as it is (the middle row stays on the old edge, the two sides are flat); 0.5 rounds the fold over the band's width":
-        "Inset Line 専用。折れをまたぐ帯の形状: 1.0 はクリースをそのまま保ち（中央列は元の辺に留まり、両側は平坦になります）、0.5 は帯の幅で折れを丸めます",
     "Interior quad size for the preview fill, in mm of fabric (converted into the flat layout the retopo lives in). 0 follows the boundary Spacing above, which is what makes the preview honest: the interior then shows the density the boundary is asking for":
         "プレビュー充填の内部クワッドのサイズ。単位は布の実寸 mm（retopo が住む平面レイアウトへ変換されます）。0 にすると上の境界 Spacing に従い、それがプレビューを正直にします——内部が境界の要求している密度をそのまま見せることになります",
     "Live preview: draw the opposite-side ghost + connector ONLY for SELECTED BOUNDARY verts in Edit Mode. Interior verts have no seam partner so they're ignored; boundary verts farther than Max Seam Distance from any seam (free edges / hems) are skipped too. Shows ALL partners, so an N-way junction (folded hem / pocket / 3+ panels meeting) draws every counterpart, not just the nearest. Updates as you select/move":
@@ -975,8 +968,6 @@ _UI_STRINGS = {
         "平面化する UV レイヤー。空なら Guide のアクティブな UV レイヤーを使います",
     "Vertex count to give the selected span, both anchors included. Both sides of a sewn seam are set to the same number":
         "選択したスパンに与える頂点数（両端の Anchor を含む）。縫い Seam の両側が同じ数に設定されます",
-    "When extending, an edge counts as part of the fold line only if the angle between its two faces is at least this (degrees). Lower it for very soft folds":
-        "延長するとき、2 つの面の角度がこれ（度）以上でなければ、その辺は折れ線の一部とみなされません。とても緩やかな折れの場合は下げてください",
     "When leaving Edit Mode in the 3D state, automatically bind any vertices that were just created (no stored attachment) to the Guide surface and repair their 2D Basis position. Prevents new verts from flying away or fusing with the back face. Turn off to bind manually with 'Bind New 3D Verts'":
         "3D 状態で Edit Mode を抜けるとき、直前に作られた頂点（アタッチメント未保存のもの）を自動的に Guide 表面へバインドし、2D Basis 位置を修復します。新しい頂点が飛んでいったり裏面に融合するのを防ぎます。'Bind New 3D Verts' で手動バインドしたい場合は OFF にしてください",
     "When ON, pressing G in Edit Mode activates Ghost Snap Move — vertices snap only to ghost points":

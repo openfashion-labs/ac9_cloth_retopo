@@ -2,9 +2,10 @@
 turning it into the Guide before it is used as a bake source.
 
 Rows are numbered in workflow order so the panel reads as the procedure:
-1 Flat SK, 2 Folds, 3 Lines, 4 Pieces (Inset Line must run before Inset
-Pieces so the line's band still reaches an outline that has not been inset
-yet), and 5 UV behind the Experimental switch.
+1 Flat SK, 2 Folds, 3 Pieces, 4 Lines (Inset Pieces runs FIRST: it keeps the
+tagged fold edges as constraints, so Inset Line only has to reach the strip's
+inner row and never touches the outline), and 5 UV behind the Experimental
+switch.
 Every step works on the GUIDE (Setup's picker) and on the mode the
 GUIDE is in — like every other panel in the tab, and unlike this panel's own
 past, where step 1 took the selection and the rest took the active object
@@ -51,12 +52,12 @@ class AC9_PT_CloCleanup(bpy.types.Panel):
         row.operator("ac9_cloth.clo_tag_selected", text="Mark").kind = 'CREASE'
         row.operator("ac9_cloth.clo_tag_selected", text="Untag").kind = 'NONE'
         row.operator("ac9_cloth.clo_clear_tags", text="", icon='X')
-        row = uic.labeled_row(col, "3 Lines")
-        row.scale_y = 1.2
-        row.operator("ac9_cloth.clo_inset_line", text="Inset Line", icon='MOD_EDGESPLIT')
-        row = uic.labeled_row(col, "4 Pieces")
+        row = uic.labeled_row(col, "3 Pieces")
         row.scale_y = 1.2
         row.operator("ac9_cloth.clo_inset", text="Inset Pieces", icon='MOD_SOLIDIFY')
+        row = uic.labeled_row(col, "4 Lines")
+        row.scale_y = 1.2
+        row.operator("ac9_cloth.clo_inset_line", text="Inset Line", icon='MOD_EDGESPLIT')
         col.prop(p, "band_width")
         # UV Mirror is Experimental since 2026-09-09: unlike steps 1-4, which
         # are "press the button", step 5 only makes sense in the middle of a
@@ -94,9 +95,3 @@ class AC9_PT_CloCleanupSettings(bpy.types.Panel):
         col = layout.column(align=True)
         uic.draw_heading(col, "Find Folds", icon='EDGESEL')
         col.prop(p, "tag_min_angle")
-        layout.separator()
-        col = layout.column(align=True)
-        uic.draw_heading(col, "Inset Line", icon='MOD_EDGESPLIT')
-        col.prop(p, "fold_extend")
-        col.prop(p, "fold_min_dihedral")
-        col.prop(p, "line_profile")

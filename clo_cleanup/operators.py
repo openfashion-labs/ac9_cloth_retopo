@@ -141,12 +141,13 @@ class AC9_OT_CloInset(bpy.types.Operator):
     bl_idname = "ac9_cloth.clo_inset"
     bl_label = "Inset Pieces"
     bl_description = (
-        "Step 3. Run after Inset Line. For every pattern piece: absorb the "
-        "vertices closer than Width to the outline (collapsed onto the "
-        "outline), then inset the outline by Width so a vertex row runs "
-        "parallel to it, seams and free edges alike. The parallel-internal-"
-        "line trick, done in Blender on the raw CLO export, on the flat "
-        "shape key. Object Mode"
+        "Step 2. Run before Inset Line. For every pattern piece: offset the "
+        "outline inward by Width on the flat shape key and rebuild the ring "
+        "between the two as triangles, so a vertex row runs parallel to the "
+        "outline, seams and free edges alike. Nothing is welded, so every "
+        "outline vertex survives and the sewn pairs stay matched. The "
+        "parallel-internal-line trick, done in Blender on the raw CLO "
+        "export. Object Mode"
     )
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -177,9 +178,14 @@ class AC9_OT_CloInset(bpy.types.Operator):
         # packed into one UV square.
         width = p.band_width * core.flat_scale_bm(bm, flay, blay)
         with uic.ProgressScope(wm) as prog:
-            stats = core.inset_pieces(bm, width, sharp_inner=True,
-                                      progress=uic.ProgressThrottle(wm),
-                                      flat=flat)
+            try:
+                stats = core.inset_pieces(bm, width, sharp_inner=True,
+                                          progress=uic.ProgressThrottle(wm),
+                                          flat=flat)
+            except core.ShapelyMissing as exc:
+                bm.free()
+                self.report({'ERROR'}, str(exc))
+                return {'CANCELLED'}
             bm.to_mesh(ob.data)
             bm.free()
             ob.data.update()
@@ -195,20 +201,22 @@ class AC9_OT_CloInset(bpy.types.Operator):
         # where a thin band starts failing, so no line is drawn here; the number
         # is shown and the only thing warned about is an unambiguous no-op.
         band_ratio = (width / flat_bnd) if flat_bnd > 0.0 else 0.0
-        no_absorb = stats['absorbed'] == 0
-        msg = (f"Inset: {stats['pieces']} pieces, {stats['absorbed']} vertices absorbed, "
-               f"{stats['slivers']} needles removed, {stats.get('flipped', 0)} outline slivers merged, "
-               f"{stats.get('corners', 0)} corners widened, {stats.get('slits', 0)} slit tips, "
-               f"{stats['strip_faces']} strip faces (flat: {flat[0]}) "
+        nothing_built = stats.get('strip_faces', 0) == 0
+        msg = (f"Inset: {stats['pieces']} pieces, {stats.get('faces_removed', 0)} faces replaced, "
+               f"{stats.get('row_verts', 0)} row vertices, "
+               f"{stats.get('strip_faces', 0)} strip + {stats.get('gap_faces', 0)} gap faces, "
+               f"{stats.get('crease_constraints', 0)} fold edges kept as constraints "
+               f"(flat: {flat[0]}) "
                f"| seam resync (whole mesh): +{stats.get('resync_split', 0)} verts, "
                f"{stats.get('resync_zero', 0)} zero-length welded, "
                f"desync left {desync} / zero-length {zero_len}")
         msg += (f" | band {band_ratio:.2f}x the outline spacing "
                 f"({width * 1000:.2f}mm flat vs {flat_bnd * 1000:.2f}mm)")
-        if no_absorb:
-            msg += (" | nothing was absorbed: Width is far below what this "
-                    "mesh's outline can express. Raise Width, or export the "
-                    "garment at a smaller CLO particle distance")
+        if nothing_built:
+            msg += (" | no strip was built: Width is far below what this "
+                    "mesh's outline can express, or every piece is thinner "
+                    "than twice Width. Raise Width, or export the garment at "
+                    "a smaller CLO particle distance")
         nonfinite = stats.get('nonfinite', 0)
         if nonfinite:
             msg += _NONFINITE_NOTE % nonfinite
@@ -218,7 +226,7 @@ class AC9_OT_CloInset(bpy.types.Operator):
             from ..clo_projector import guide as _pguide
             _pguide.invalidate_nonfinite(ob)
         _set_status(context, msg)
-        self.report({'WARNING'} if (desync or zero_len or no_absorb or nonfinite)
+        self.report({'WARNING'} if (desync or zero_len or nothing_built or nonfinite)
                     else {'INFO'}, msg)
         return {'FINISHED'}
 
@@ -227,14 +235,12 @@ class AC9_OT_CloInsetLine(bpy.types.Operator):
     bl_idname = "ac9_cloth.clo_inset_line"
     bl_label = "Inset Line"
     bl_description = (
-        "Step 2. Inset a fold line to both sides: absorb every original "
-        "vertex closer than Width onto it, then bevel the line into two rows "
-        "parallel to it at Width on each side, with the crease itself kept "
-        "as the middle row. Uses the selected vertices when 2 or more are "
-        "selected (walked outward with Extend Along Fold); otherwise the "
-        "crease edges tagged by Find Folds. Run before Inset Pieces (the "
-        "band needs to reach an outline that has not been inset yet). Edit "
-        "Mode"
+        "Step 3. Run after Inset Pieces. Inset a fold line to both sides: a "
+        "band Width wide on each side of the line is rebuilt as triangles, "
+        "with the fold's own vertices and edges left exactly where they are. "
+        "Uses the SELECTED EDGES (each connected run is one line); with "
+        "nothing selected, the crease edges tagged by Find Folds. The band "
+        "stops at the row Inset Pieces left along the outline. Edit Mode"
     )
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -255,25 +261,26 @@ class AC9_OT_CloInsetLine(bpy.types.Operator):
         if flat is None:
             self.report({'ERROR'}, f"Inset Line {_FLAT_SK_ERROR}")
             return {'CANCELLED'}
-        sel = [v for v in bm.verts if v.select]
-        extend = p.fold_extend
+        # The line is a set of EDGES: each connected run is one line, and the
+        # band is built from it directly (nothing is walked outward or
+        # guessed from 3D angles any more).
+        sel = [e for e in bm.edges if e.select]
         note = ""
         # A selection covering most of the mesh is not a fold line — it is
         # the all-selected state Edit Mode was entered with (measured
         # 2026-09-05: every face of the export insetted from one click). Treat
         # it as no selection.
-        if len(bm.verts) and len(sel) > 0.5 * len(bm.verts):
-            note = f" ({len(sel)} vertices were selected — most of the mesh; used the tagged folds instead)"
+        if len(bm.edges) and len(sel) > 0.5 * len(bm.edges):
+            note = (f" ({len(sel)} edges were selected — most of the mesh; "
+                    f"used the tagged folds instead)")
             sel = []
-        if len(sel) < 2:
-            # No selection: fall back to the tagged crease edges. The tag
-            # already defines the whole line, so it is not walked outward.
-            tagged = core.tagged_edges(bm)
-            sel = list({v for e in tagged for v in e.verts})
-            extend = False
+        if not sel:
+            # No selection: fall back to the tagged crease edges.
+            sel = list(core.tagged_edges(bm))
         if len(sel) < 2:
             self.report({'WARNING'},
-                        "Inset Line: select at least 2 fold-line vertices, or tag a crease first (Find Folds)")
+                        "Inset Line: select the fold line's edges (2 or more), "
+                        "or tag a crease first (Find Folds)")
             return {'CANCELLED'}
         wm = context.window_manager
         # Same conversion as Inset Pieces: Width is a fabric dimension, the
@@ -282,25 +289,28 @@ class AC9_OT_CloInsetLine(bpy.types.Operator):
             bm, bm.verts.layers.shape.get(flat[0]),
             bm.verts.layers.shape.get(flat[1]))
         with uic.ProgressScope(wm) as prog:
-            stats = core.inset_line(bm, sel, width, extend=extend,
-                                    min_dihedral_deg=p.fold_min_dihedral,
-                                    profile=p.line_profile,
-                                    progress=uic.ProgressThrottle(wm),
-                                    flat=flat)
+            try:
+                stats = core.inset_line(bm, sel, width,
+                                        progress=uic.ProgressThrottle(wm),
+                                        flat=flat)
+            except core.ShapelyMissing as exc:
+                self.report({'ERROR'}, str(exc))
+                return {'CANCELLED'}
             bmesh.update_edit_mesh(ob.data, loop_triangles=True, destructive=True)
             prog.update(1.0)
-        if stats['bevel_faces'] == 0:
-            msg = (f"Inset Line: nothing to inset ({stats['line_verts']} line vertices, "
-                   f"{stats['trimmed']} trimmed at the outline)")
+        if stats.get('band_faces', 0) == 0:
+            msg = (f"Inset Line: nothing to inset ({stats.get('lines', 0)} lines, "
+                   f"{stats.get('lines_too_short', 0)} shorter than 2x Width){note}")
             _set_status(context, msg)
             self.report({'WARNING'}, msg)
             return {'CANCELLED'}
         desync = stats.get('desync', 0)
         zero_len = stats.get('zero_len', 0)
-        msg = (f"Inset Line: {stats['line_verts']} line vertices, {stats['repaired']} edges "
-               f"repaired, {stats['absorbed']} absorbed, {stats['slivers']} needles removed, "
-               f"{stats.get('lines', 0)} lines, band {stats['width_achieved'] / max(width, 1e-12) * 100:.0f}% of Width "
-               f"(narrowest {stats.get('width_min', 0.0) / max(width, 1e-12) * 100:.0f}%) (flat: {flat[0]}){note} "
+        msg = (f"Inset Line: {stats.get('lines_used', 0)}/{stats.get('lines', 0)} lines inset "
+               f"({stats.get('lines_branching', 0)} branching, "
+               f"{stats.get('lines_too_short', 0)} shorter than 2x Width), "
+               f"{stats.get('band_faces', 0)} band faces, {stats.get('row_edges', 0)} row edges "
+               f"(flat: {flat[0]}){note} "
                f"| seam resync (whole mesh): +{stats.get('resync_split', 0)} verts, "
                f"{stats.get('resync_zero', 0)} zero-length welded, "
                f"desync left {desync} / zero-length {zero_len}")
