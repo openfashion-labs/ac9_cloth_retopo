@@ -21,15 +21,15 @@ Every step works on the **Guide**, so set **Guide** in the **Setup** panel above
 
 1. **Create Flat SK** (Object Mode) — splits at UV island boundaries and writes the flat layout to a shape key. Steps 2–4 below need this shape key.
 2. **Find Folds** — tags edges as fold lines where the dihedral angle is at least **Crease Min Angle**. Use **Show** to select and check what got tagged, **Mark** / **Untag** to adjust by hand, and **×** to clear everything.
-3. **Inset Line** (Edit Mode) — insets the tagged fold lines on both sides into a band. Run this before **Inset Pieces** (the band needs to reach an outline that hasn't been inset yet).
-4. **Inset Pieces** (Object Mode) — for each pattern piece, absorbs vertices within **Width** of the outline into the outline, then insets the outline by **Width** to create a parallel row of vertices.
+3. **Inset Pieces** (Object Mode) — for each pattern piece, offsets the outline inward by **Width** on the flat shape key and rebuilds the ring between the outline and that new row as triangles, creating a vertex row parallel to the outline. Nothing is welded, so every outline vertex survives and the sewn pairs stay matched. Run this before **Inset Line** (the tagged fold lines are kept as constraints, so Inset Line never has to touch the outline).
+4. **Inset Line** (Edit Mode) — insets a fold line on both sides into a band. Uses the **selected edges** (each connected run is one line); with nothing selected, it falls back to the **Find Folds** tags. The band stops at the row **Inset Pieces** left along the outline.
 
-**Next**: the result line below the panel shows the counts of what happened (vertices absorbed, sliver triangles removed, band-width achievement rate, etc.). Check that no spot is reported where the band width came out extremely thin relative to **Width**.
+**Next**: the result line below the panel shows the counts of what happened (faces replaced, new row vertices, band faces, and the seam **desync** count). If **desync is not 0**, the 1:1 seam match is broken — don't move on with it.
 Don't apply Solidify until the very end.
 
-![The Guide Prep panel (1 Flat SK / 2 Folds / 3 Lines / 4 Pieces) next to the pattern pieces laid out flat.](../images/03_prepare_panel.png)
+![The Guide Prep panel next to the pattern pieces laid out flat.](../images/03_prepare_panel.png)
 
-The payoff shows up in 3D. Left is the raw export, right is after **Inset Line** / **Inset Pieces** — the hard crease that ran along the fold line is gone.
+The payoff shows up in 3D. Left is the raw export, right is after **Inset Pieces** / **Inset Line** — the hard crease that ran along the fold line is gone.
 
 ![The shoulder of a CLO export. On the left a sharp ridge runs along the fold line; on the right, after the inset pass, the surface is smooth.](../images/04_inset_before_after.jpg)
 

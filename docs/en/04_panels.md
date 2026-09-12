@@ -38,12 +38,12 @@ Every button works on the **Guide** (Setup's picker) and on the mode the **Guide
 | **Mark** | manually tags selected edges as crease (picked up by **Inset Line**) | Guide in Edit Mode / edges selected | adds tags |
 | **Untag** | removes the tag from selected edges | Guide in Edit Mode / edges selected | removes tags |
 | **×** | clears all crease tags (the edge attribute `ac9_crease_kind`) | Guide set | all tags removed |
-| **Inset Line** | insets the fold line on both sides. Absorbs original vertices closer than **Width** into the line, then bevels the line into two rows left and right by **Width**, keeping the crease itself as the middle row. Uses the current selection if 2+ vertices are selected (with **Extend Along Fold** walking outward along the line), otherwise falls back to the **Find Folds** tags | Guide in Edit Mode / requires a flat shape key | a band is created. The result line reports the line's vertex count, repaired edges, absorbed count, removed slivers, and the band-width achievement rate (with the minimum) |
-| **Inset Pieces** | for each pattern piece, absorbs vertices within **Width** of the outline into the outline, then insets the outline by **Width**, creating a parallel vertex row without distinguishing sewn seams from free edges | Guide in Object Mode / requires a flat shape key | the result line reports piece count, absorbed vertices, removed slivers, merged outline slivers, widened corners, slit tips, and band face count |
-| **Width** | the half-width of the inset (in mesh units, default 0.001 = 1 mm). Original vertices closer than this distance are absorbed first. Larger values give a more gradual shading gradient | — | affects both insets above |
+| **Inset Pieces** | for each pattern piece, offsets the outline inward by **Width** on the flat shape key and rebuilds the ring between the two as triangles, creating a parallel vertex row without distinguishing sewn seams from free edges. Nothing is welded, so no outline vertex is lost, and tagged fold lines are kept as constraints | Guide in Object Mode / requires a flat shape key | the result line reports piece count, faces replaced, new row vertices, strip and gap face counts, the fold edges kept as constraints, and the seam desync count |
+| **Inset Line** | rebuilds a band **Width** wide on each side of a fold line as triangles, leaving the fold's own vertices and edges exactly where they are. Uses the **selected edges** (each connected run is one line); with nothing selected, falls back to the **Find Folds** tags. The band stops at the row **Inset Pieces** left behind | Guide in Edit Mode / requires a flat shape key | a band is created. The result line reports how many lines were inset (with branching and too-short counts), the band face count, the row edge count, and the seam desync count |
+| **Width** | the half-width of the inset (in mesh units, default 0.001 = 1 mm). The original geometry inside that band is replaced by new triangles. Larger values give a more gradual shading gradient | — | affects both insets above |
 
-**Order matters**: run **Inset Line** before **Inset Pieces**. The band needs to reach an outline that hasn't been inset yet.
-The panel's row numbers — 1 Flat SK / 2 Folds / 3 Lines / 4 Pieces — are the authoritative order.
+**Order matters**: run **Inset Pieces** before **Inset Line**. Inset Pieces keeps the tagged fold lines as constraints, so the later Inset Line only has to reach the inner row and never touches the outline.
+The panel's row numbers — 1 Flat SK / 2 Folds / 3 Pieces / 4 Lines — are the authoritative order.
 
 Keep Solidify as a live modifier throughout this step. The export doubles as the retopo Guide, and applying Solidify breaks that.
 
@@ -52,9 +52,6 @@ Keep Solidify as a live modifier throughout this step. The export doubles as the
 | Setting | Affects |
 |---|---|
 | **Crease Min Angle** | the threshold for **Find Folds** (degrees, default 60). At 60, it picks up the Solidify rim (90°) and deliberate pressed folds, but not drape wrinkles |
-| **Extend Along Fold** | whether **Inset Line** walks outward along the fold line from both ends of the selection (default on). Lets you process an entire line by selecting just two vertices |
-| **Fold Min Angle** | while walking, only edges with a dihedral angle at or above this value are treated as fold line (degrees, default 6). Lower it for soft folds |
-| **Line Profile** | the cross-section of **Inset Line**'s band (default 1.0). 1.0 keeps the crease sharp and flattens the sides; 0.5 rounds the fold over the band width |
 
 ---
 
