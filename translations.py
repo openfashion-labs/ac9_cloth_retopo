@@ -608,6 +608,10 @@ _UI_STRINGS = {
         "すべてのステップは Guide（Setup）に対して動く。後のステップは 1 が必要。Basis は触らない",
     "Show / Untag / Inset Line: put the Guide in Edit Mode":
         "Show / Untag / Inset Line：Guide を Edit Mode にする",
+    "Inset Line: run Inset Pieces first (step 3, Object Mode)":
+        "Inset Line：先に Inset Pieces を実行（手順 3、Object Mode）",
+    "Run Inset Pieces first (step 3, Object Mode).":
+        "先に Inset Pieces を実行してください（手順 3、Object Mode）。",
     "UV Mirror is Experimental (Add-on Preferences > Experimental tools).":
         "UV Mirror は Experimental です（アドオン設定 > Experimental tools）。",
     "Regions / × : selected islands only":

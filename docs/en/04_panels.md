@@ -44,6 +44,7 @@ Every button works on the **Guide** (Setup's picker) and on the mode the **Guide
 
 **Order matters**: run **Inset Pieces** before **Inset Line**. Inset Pieces keeps the tagged fold lines as constraints, so the later Inset Line only has to reach the inner row and never touches the outline.
 The panel's row numbers — 1 Flat SK / 2 Folds / 3 Pieces / 4 Lines — are the authoritative order.
+**Inset Line stays greyed out until Inset Pieces has run** (the reason is shown under the button and in its tooltip). Find Folds works in Edit Mode while Inset Pieces is Object Mode only, so the lit button next to it used to be Inset Line — this guard stops that slip. Go back to Object Mode, run Inset Pieces, then press Inset Line in Edit Mode.
 
 Keep Solidify as a live modifier throughout this step. The export doubles as the retopo Guide, and applying Solidify breaks that.
 

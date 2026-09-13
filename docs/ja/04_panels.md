@@ -44,6 +44,7 @@ CLO 書き出しをベイク元として整える工程。既定で畳まれて�
 
 **実行順の注意**: **Inset Pieces** を **Inset Line** より先に実行してください。タグ済みの折れ線は Inset Pieces が制約として残すので、後から走る Inset Line は内側の行までで済み、外周には触れません。
 パネルの行番号 1 Flat SK / 2 Folds / 3 Pieces / 4 Lines が正です。
+**Inset Pieces を実行するまで Inset Line はグレーアウト**します（ボタンの下とツールチップに理由が出ます）。Find Folds は Edit Mode で押せて、Inset Pieces は Object Mode 専用なので、そのまま隣の Inset Line を押してしまわないための予防です。Object Mode に戻して Inset Pieces を実行してから、Edit Mode で Inset Line を押してください。
 
 Solidify はこの工程を通じてライブのモディファイアのままにしてください。書き出しはリトポの Guide でもあり、適用するとそれが壊れます。
 

@@ -18,6 +18,7 @@ child panel, as everywhere else in the tab.
 import bpy
 
 from .. import ui_common as uic
+from . import operators as clo_ops
 
 
 class AC9_PT_CloCleanup(bpy.types.Panel):
@@ -58,6 +59,10 @@ class AC9_PT_CloCleanup(bpy.types.Panel):
         row = uic.labeled_row(col, "4 Lines")
         row.scale_y = 1.2
         row.operator("ac9_cloth.clo_inset_line", text="Inset Line", icon='MOD_EDGESPLIT')
+        if not clo_ops.pieces_done(top.guide_obj):
+            # Inset Line is greyed out by its poll until Inset Pieces has run;
+            # say why right under the button (the tooltip says it too)
+            uic.draw_hint(col, "Inset Line: run Inset Pieces first (step 3, Object Mode)")
         col.prop(p, "band_width")
         # UV Mirror is Experimental since 2026-09-09: unlike steps 1-4, which
         # are "press the button", step 5 only makes sense in the middle of a

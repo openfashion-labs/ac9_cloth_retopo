@@ -36,6 +36,21 @@ def _set_status(context, text):
     _props(context).status = text
 
 
+# ID property on the Guide MESH, set by Inset Pieces when it finishes. Inset
+# Line's poll and the Prepare panel read it. Not the ROW attribute: Find
+# Folds already creates that layer (empty) through prepare_layers, so its
+# presence says nothing about whether the rows exist.
+PIECES_DONE_PROP = "ac9_inset_pieces_done"
+PIECES_FIRST_MSG = "Run Inset Pieces first (step 3, Object Mode)."
+
+
+def pieces_done(ob):
+    """True when Inset Pieces has been run on this Guide (its mesh carries
+    the marker). A Guide inset before the marker existed reads False: run
+    Inset Pieces again on a fresh export."""
+    return bool(ob is not None and ob.type == 'MESH' and ob.data.get(PIECES_DONE_PROP))
+
+
 def _guide(context):
     """The Guide object (Setup's picker) when it is a mesh, else None.
 
@@ -189,6 +204,10 @@ class AC9_OT_CloInset(bpy.types.Operator):
             bm.to_mesh(ob.data)
             bm.free()
             ob.data.update()
+            # The marker Inset Line's poll reads (see pieces_done). Stored
+            # on the mesh datablock so it travels with the Guide, is saved
+            # in the .blend, and is part of the undo state of this step.
+            ob.data[PIECES_DONE_PROP] = True
             prog.update(1.0)
         desync = stats.get('desync', 0)
         zero_len = stats.get('zero_len', 0)
@@ -246,6 +265,15 @@ class AC9_OT_CloInsetLine(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        # The prerequisite comes first: Find Folds runs in Edit Mode, Inset
+        # Pieces is then greyed out (Object Mode only) and this button is
+        # the one lit up next to it — pressed by mistake on the first real
+        # test (2026-09-13). Greying it out with the reason in the tooltip
+        # is the fix; the mode check stays behind it.
+        guide = _guide(context)
+        if guide is not None and not pieces_done(guide):
+            cls.poll_message_set(PIECES_FIRST_MSG)
+            return False
         return _poll_guide(cls, context, 'EDIT')
 
     def execute(self, context):
