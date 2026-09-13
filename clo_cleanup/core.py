@@ -1262,6 +1262,7 @@ def _inset_pieces_2d(bm, width, margin=ABSORB_MARGIN, sharp_inner=True,
     inset_pieces). Returns a Counter-backed stats dict."""
     import shapely
     from shapely.geometry import Polygon, LineString, Point
+    from shapely.ops import nearest_points
     from shapely.prepared import prep
 
     tick = progress if callable(progress) else (lambda f: None)
@@ -1426,18 +1427,77 @@ def _inset_pieces_2d(bm, width, margin=ABSORB_MARGIN, sharp_inner=True,
         stats['crease_constraints'] += len(crease_lines)
         crease_geom = shapely.union_all(crease_lines) if crease_lines else None
 
-        def _regions(region, tag):
-            """Sub-regions of `region` split by the crease lines (polygonize
-            of the noded boundary + creases), or [region] itself."""
-            if crease_geom is None or region.is_empty or not crease_geom.intersects(region):
+        # --- rungs: GEOS's constrained_delaunay_triangles is an ear-clipping
+        #     polygon triangulator, not a Delaunay of the point set. Handed a
+        #     ring-shaped region (S is an annulus wherever the piece is wider
+        #     than 2 W: outline outside, row inside) it joins the hole to the
+        #     shell with one bridge and then clips ears from there, which on
+        #     a 0.33 mm x 23 mm strip came out as two crossing fans of
+        #     slivers: a 22.85 mm edge from one row corner to 47 outline
+        #     vertices (measured on a trouser waistband, 2026-09-13). Cutting
+        #     the region first into one cell per outline vertex — a rung from
+        #     the vertex to its foot on the row — makes every cell a small
+        #     quad the triangulator cannot get wrong (longest edge 22.85 ->
+        #     0.70 mm, same triangle count, faster). G gets the same
+        #     treatment with rungs from the row vertices to the core edge.
+        #     Both ends of a rung must be EXISTING vertices with their exact
+        #     coordinates (a Q ring vertex, an outline vertex, a core edge
+        #     vertex): a rung ending at a computed foot a few nm beside a ring
+        #     vertex would be noded into a second vertex there — 769
+        #     degenerate triangles and 276 cracks on the first try. And the
+        #     rung must lie inside the region (covers), or it is dropped.
+        q_pts = [c for qp in _polys(Q) for r in _ring_coords(qp) for c in r]
+        q_kd = kdtree.KDTree(len(q_pts))
+        for i, (x, y) in enumerate(q_pts):
+            q_kd.insert(Vector((x, y, 0.0)), i)
+        q_kd.balance()
+        S_prep = prep(S)
+        rungs_S = []
+        for v in bverts:
+            _co, i, d = q_kd.find(v.co)
+            if d is None or d <= 0.0 or d > 1.5 * width:
+                continue
+            line = LineString([(v.co.x, v.co.y), q_pts[i]])
+            if S_prep.covers(line):
+                rungs_S.append(line)
+            else:
+                stats['rungs_S_outside'] += 1
+        rungs_G = []
+        if core_geom is not None and not G.is_empty:
+            c_verts = list({v for e in cedges for v in e.verts})
+            c_kd = kdtree.KDTree(len(c_verts))
+            for i, v in enumerate(c_verts):
+                c_kd.insert(v.co, i)
+            c_kd.balance()
+            G_prep = prep(G)
+            for (x, y) in q_pts:
+                _co, i, d = c_kd.find(Vector((x, y, 0.0)))
+                if d is None or d <= 0.0 or d > 3.0 * width:
+                    continue
+                cv = c_verts[i]
+                line = LineString([(x, y), (cv.co.x, cv.co.y)])
+                if G_prep.covers(line):
+                    rungs_G.append(line)
+                else:
+                    stats['rungs_G_outside'] += 1
+        stats['rungs_S'] += len(rungs_S)
+        stats['rungs_G'] += len(rungs_G)
+
+        def _regions(region, tag, rungs):
+            """Sub-regions of `region`: cut by the rungs and by the crease
+            constraint lines (polygonize of the noded boundary + cuts), or
+            [region] itself when there is nothing to cut with."""
+            cuts = list(rungs)
+            if crease_geom is not None and not region.is_empty and crease_geom.intersects(region):
+                cuts.extend(shapely.get_parts(crease_geom.intersection(region)))
+            if not cuts or region.is_empty:
                 return _polys(region)
             rings = []
             for pg in _polys(region):
                 rings.append(LineString(list(pg.exterior.coords)))
                 for r in pg.interiors:
                     rings.append(LineString(list(r.coords)))
-            inside = crease_geom.intersection(region)
-            noded = shapely.node(shapely.union_all(rings + list(shapely.get_parts(inside))))
+            noded = shapely.node(shapely.union_all(rings + cuts))
             faces_geom = shapely.polygonize(list(shapely.get_parts(noded)))
             rp = prep(region)
             out = []
@@ -1462,8 +1522,8 @@ def _inset_pieces_2d(bm, width, margin=ABSORB_MARGIN, sharp_inner=True,
                 stats[tag + '_regions_area_gap'] += 1
             return out or _polys(region)
 
-        S_regions = _regions(S, 'S')
-        G_regions = _regions(G, 'G')
+        S_regions = _regions(S, 'S', rungs_S)
+        G_regions = _regions(G, 'G', rungs_G)
         # Every boundary coordinate of the regions is a vertex: rows, and the
         # crease / row crossings the noding made. A coordinate the noding
         # moved by a few ulps must NOT become a second vertex next to the
