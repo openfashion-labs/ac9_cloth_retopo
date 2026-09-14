@@ -1,0 +1,116 @@
+name: release
+
+# リリース ZIP のビルドと GitHub Release への添付。
+#   - タグ `v*` の push: そのタグをビルドして同名の Release に ZIP を添付する
+#     （タグは release tags ルールセットにより admin しか打てない）
+#   - 手動実行: 既存タグを指定して同じことをやり直す（Release を先に draft で作った場合など）
+#   - PR: このファイルか manifest を変えた PR ではビルドだけ行い、Release には触らない（動作確認用）
+# ビルドには Blender 本体が要るため、公式配布の Linux 版を runner に落として
+# `blender --command extension build` を使う（手元に Blender が無くてもリリースできる）。
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build and attach the ZIP to (e.g. v1.0.0)"
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - blender_manifest.toml
+
+permissions:
+  contents: read
+
+env:
+  # ビルドに使う Blender。version と sha256 は https://download.blender.org/release/ の
+  # 同名 .sha256 ファイルから取る。Dependabot の対象外なので手動で上げる
+  BLENDER_VERSION: "5.2.1"
+  BLENDER_SHA256: "a31f524fa99a527d3d52b7f5aaa68c34e1a19d5a1c9473f79c5cc610fd5b10e9"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.tag.outputs.tag || github.ref }}
+
+      - name: Check that the tag matches the manifest version
+        if: steps.tag.outputs.tag != ''
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          ver=$(sed -nE 's/^version = "([^"]+)".*/\1/p' blender_manifest.toml)
+          if [ "$tag" != "v$ver" ]; then
+            echo "::error::tag '$tag' does not match blender_manifest.toml version '$ver'"
+            exit 1
+          fi
+
+      - name: Download Blender
+        run: |
+          series="${BLENDER_VERSION%.*}"
+          url="https://download.blender.org/release/Blender${series}/blender-${BLENDER_VERSION}-linux-x64.tar.xz"
+          curl -fsSL --retry 3 -o blender.tar.xz "$url"
+          echo "${BLENDER_SHA256}  blender.tar.xz" | sha256sum -c -
+          mkdir blender
+          tar -xJf blender.tar.xz -C blender --strip-components=1
+
+      - name: Install libraries Blender needs to start headless
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            libxi6 libxrender1 libxkbcommon0 libsm6 libice6 libgl1 libegl1 libxxf86vm1 libxfixes3 libgomp1
+
+      - name: Validate and build the extension
+        run: |
+          ./blender/blender --command extension validate .
+          mkdir -p dist
+          ./blender/blender --command extension build --source-dir . --output-dir dist
+          ls -l dist
+          ./blender/blender --command extension validate dist/*.zip
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: extension-zip
+          path: dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: needs.build.outputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: extension-zip
+          path: dist
+
+      - name: Attach the ZIP to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          # Release が無ければ draft で作る（本文は後から Releases 画面で書く）。
+          # 既にあれば（draft でも）ZIP を差し替えるだけ
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "$TAG" --notes "See CHANGELOG.md."
+          fi
+          gh release upload "$TAG" dist/*.zip --repo "$GITHUB_REPOSITORY" --clobber
