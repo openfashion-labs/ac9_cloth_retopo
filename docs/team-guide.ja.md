@@ -34,17 +34,18 @@
 ※ この一覧は要約です。正式なルールは [CONTRIBUTING.ja.md](../CONTRIBUTING.ja.md) を
 参照してください。
 
-## 最初に一度だけ: push 前のローカル検査を有効にする
+## 最初に一度だけ: clone 後のセットアップ
 
-このリポジトリには、push の直前に個人情報・内部名の混入を検査して止める仕組み
-（pre-push フック）が入っています。**一度 push されたものは完全には消せない**ため、
-push 前に止めることが唯一確実な防御です。clone したら次の 2 つを実行してください
-（AI エージェントに「team-guide の pre-push フックをセットアップして」と頼んでも OK）:
+clone したら、リポジトリのフォルダで **Git に名前とメールアドレスを設定**してください
+（未設定だと最初のコミットで止まります。AI エージェントに
+「team-guide の初回セットアップをして」と頼んでも OK）:
 
-1. リポジトリのフォルダで `git config core.hooksPath .githooks` を実行する
-2. 検査パターンのファイルをエンジニアから受け取り、`.git/pii_block_pattern` として
-   保存する（このファイルは Git の管理外で、コミットされません。
-   **中身をチャットやコミットに貼らないでください**）
+- `git config user.name "GitHubのユーザー名"`
+- `git config user.email "GitHubのnoreplyアドレス"`
+  noreply アドレスは GitHub の Settings > Emails に表示される
+  `数字+ユーザー名@users.noreply.github.com` 形式のものです。
+  **個人のメールアドレスは設定しないでください** — コミットに恒久的に記録され、
+  公開リポジトリでは誰でも見られます
 
 パターン未設定でも push はできますが（警告のみ）、検査は CI 任せになります。
 
