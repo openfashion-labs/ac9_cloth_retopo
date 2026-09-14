@@ -11,10 +11,17 @@
 
 ## インストール
 
-1. アドオンを ZIP にまとめます。
+1. [最新リリースのページ](https://github.com/openfashion-labs/ac9_cloth_retopo/releases/latest) を開き、
+   **Assets** の中の `ac9_cloth_retopo-<バージョン>.zip` をダウンロードします。
 2. Blender で **Edit > Preferences > Add-ons**。
-3. 右上のメニューから **Install from Disk** を選び、ZIP を指定します。
+3. 右上のメニューから **Install from Disk** を選び、ダウンロードした ZIP を指定します。
 4. 一覧の **AC9 Cloth Retopo** を有効化します。
+
+> **どの ZIP を選ぶか**
+> Assets には `Source code (zip)` も並んでいますが、そちらではインストールできません。
+> リポジトリ上部の緑の **Code** ボタンにある **Download ZIP** も同じものです。
+> どちらもソースツリーだけのアーカイブで、同梱している shapely の wheel が入っていないためです。
+> **`ac9_cloth_retopo-` で始まる ZIP**（20MB 以上あります）を選んでください。
 
 有効化すると、3Dビューポートのサイドバー（N キー）に **AC9 Cloth Retopo** タブが追加されます。
 パネルは作業フェーズの順に並びます: **Prepare** / **Setup** / **Boundary** / **Faces** / **3D View** / **Guide Maps** / **Overlays** / **Advanced**。

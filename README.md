@@ -18,7 +18,14 @@ The 3D shape is obtained by projecting the flat retopo onto the high-poly Guide 
 
 ## Installation
 
-Install the ZIP via **Edit > Preferences > Add-ons > Install from Disk** and enable it.
+1. Download `ac9_cloth_retopo-<version>.zip` from **Assets** on the
+   [latest release page](https://github.com/openfashion-labs/ac9_cloth_retopo/releases/latest).
+2. In Blender, install it via **Edit > Preferences > Add-ons > Install from Disk** and enable it.
+
+> **Source code (zip)**, and **Download ZIP** under the green **Code** button, will not work.
+> Both are the source tree alone, without the bundled shapely wheels. Pick the ZIP whose
+> name starts with `ac9_cloth_retopo-`.
+
 An **AC9 Cloth Retopo** tab appears in the 3D viewport sidebar (N key).
 
 Nothing else to install: shapely (needed by Preview Fill and Grid Regions) is bundled
@@ -28,7 +35,7 @@ of wheels ship, for Windows x64, macOS arm64/x64 and Linux x64/arm64. The one ga
 Windows on ARM, for which no shapely wheel exists on PyPI; there, those two features
 say so instead of running.
 
-To build the ZIP from source:
+For developers — to build the ZIP from source yourself:
 
 ```
 blender --command extension build --source-dir ac9_cloth_retopo --output-dir .

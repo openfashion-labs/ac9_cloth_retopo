@@ -9,6 +9,14 @@ The version number is the one in `blender_manifest.toml`; each release is tagged
 
 ## [Unreleased]
 
+### Fixed
+
+- Documentation: the install instructions never said where to get the ZIP, and the manual
+  still told readers to package the add-on themselves — a leftover from before the first
+  release. Both READMEs and `docs/{en,ja}/02_install.md` now link to the Releases page and
+  spell out that `Source code (zip)` and the green **Code > Download ZIP** button do not
+  work, because they omit the bundled shapely wheels.
+
 ## [1.0.0] - 2026-09-14
 
 First public release.
