@@ -62,10 +62,13 @@ jobs:
             exit 1
           fi
 
+      # Blender 本体と出力先はソースディレクトリの外（RUNNER_TEMP）に置く。
+      # 中に置くと paths_exclude_pattern に掛からず、Blender ごと ZIP に入ってしまう
       - name: Download Blender
         run: |
           series="${BLENDER_VERSION%.*}"
           url="https://download.blender.org/release/Blender${series}/blender-${BLENDER_VERSION}-linux-x64.tar.xz"
+          cd "$RUNNER_TEMP"
           curl -fsSL --retry 3 -o blender.tar.xz "$url"
           echo "${BLENDER_SHA256}  blender.tar.xz" | sha256sum -c -
           mkdir blender
@@ -79,16 +82,25 @@ jobs:
 
       - name: Validate and build the extension
         run: |
-          ./blender/blender --command extension validate .
-          mkdir -p dist
-          ./blender/blender --command extension build --source-dir . --output-dir dist
-          ls -l dist
-          ./blender/blender --command extension validate dist/*.zip
+          blender="$RUNNER_TEMP/blender/blender"
+          dist="$RUNNER_TEMP/dist"
+          "$blender" --command extension validate .
+          mkdir -p "$dist"
+          "$blender" --command extension build --source-dir . --output-dir "$dist"
+          "$blender" --command extension validate "$dist"/*.zip
+          ls -l "$dist"
+          # 中身の確認: 先頭階層の一覧を出し、サイズが想定（wheels 込みで 20〜30MB）を大きく超えたら失敗させる
+          unzip -l "$dist"/*.zip | awk 'NR>3 {print $4}' | cut -d/ -f1 | sort -u
+          size=$(stat -c %s "$dist"/*.zip)
+          if [ "$size" -gt 60000000 ]; then
+            echo "::error::ZIP is $size bytes; something outside the add-on got packed in"
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: extension-zip
-          path: dist/*.zip
+          path: ${{ runner.temp }}/dist/*.zip
           if-no-files-found: error
 
   publish:
