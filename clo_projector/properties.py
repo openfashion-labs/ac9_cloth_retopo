@@ -195,6 +195,42 @@ class AC9CloProjectorProps(PropertyGroup):
         update=_update_island_alpha,
     )
 
+    # ── Finalize ───────────────────────────────────────────────────────────
+    finalize_close_seams: BoolProperty(
+        name="Close Seam Gaps",
+        description=(
+            "Pull the two sides of every sewn seam onto one shared 3D point, "
+            "so the deliverable has no crack along its seams. Finalize "
+            "projects each vertex onto the Guide on its own, and the Guide "
+            "itself does not hold the two sides of a sewn seam at the same "
+            "place — CLO leaves them apart — so without this the gap comes "
+            "straight through into the Final. Positions only: no vertex is "
+            "created, removed or merged, the UV islands stay split, and each "
+            "vertex moves at most half the gap it was closing. Only pairs "
+            "whose ghost is PLACED are touched; an unplaced (red) ghost has no "
+            "counterpart to meet, so those vertices are left alone and counted "
+            "in the report. Sewn seams only — a layered seam (a pocket marked "
+            "onto a body panel) is a separate layer resting on the surface, "
+            "not the same spot, so those are never pulled together"
+        ),
+        default=True,
+    )
+    finalize_weld_seams: BoolProperty(
+        name="Weld Seam Vertices",
+        description=(
+            "Also merge each group of now-coincident seam vertices into a "
+            "single vertex. OFF by default because the Final goes to baking "
+            "next, and baking wants the two sides of a seam as separate "
+            "vertices — splitting a welded mesh back apart per UV island is "
+            "real work, while welding an unwelded one is a single Merge by "
+            "Distance. So the Final ships unwelded and you weld when you "
+            "actually want it. Needs Close Seam Gaps, which makes the members "
+            "of a group exactly equal so the merge cannot pick up anything "
+            "else"
+        ),
+        default=False,
+    )
+
     # ── Seam Lines Overlay ─────────────────────────────────────────────────
     show_seam_lines: BoolProperty(
         name="Show Outline",

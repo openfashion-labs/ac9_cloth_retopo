@@ -96,6 +96,13 @@ class AC9_PT_MirrorView(bpy.types.Panel):
         row = uic.labeled_row(layout, "Finalize")
         row.scale_y = 1.2
         row.operator("ac9_cloth.finalize_retopo", text="Finalize", icon='CHECKMARK')
+        col = layout.column(align=True)
+        col.prop(props, "finalize_close_seams", text="Close Seam Gaps")
+        sub = col.row()
+        # Welding needs the pair members to be exactly equal first, so it is
+        # only offered once the gaps are being closed.
+        sub.enabled = props.finalize_close_seams
+        sub.prop(props, "finalize_weld_seams", text="Weld Seam Vertices")
         uic.draw_hint(layout, "New <Retopo>_Final: 3D shape, UV = 2D layout, no ShapeKeys")
 
 
