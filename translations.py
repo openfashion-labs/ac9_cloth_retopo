@@ -264,6 +264,9 @@ _UI_STRINGS = {
     "Nothing from AC9 Cloth Retopo found in this file.":
         "このファイルに AC9 Cloth Retopo のデータはありません。",
     "Only Unplaced": "未配置のみ",
+    "Orphan Rings": "孤立リング",
+    "Lines: Unplaced Only": "線: 未配置のみ",
+    "Unplaced Lines Only": "未配置の線のみ",
     "Outline": "輪郭",
     "Outline (white)": "輪郭（白）",
     "Overlays": "Overlays",
@@ -857,6 +860,10 @@ _UI_STRINGS = {
         "retopo の境界頂点が Guide の縫い目上にあるとみなす距離。これより離れた頂点はパネル中央を貫くカットとして扱われ、手を付けません。単位は布の実寸で、判定は平面レイアウト上で走り、その倍率は UV の詰め方で変わるので、値は使用前に変換されます",
     "How close a retopo vertex must be to a ghost to count as BONDED (placed → green, and hidden by Only Unplaced). In the cloth's real dimensions, converted into the flat layout. This is a CLASSIFICATION threshold only — keep it small (a few mm) so 'placed' still means placed. The radius that actually pulls vertices, both for Ghost Snap on G and for Force Bond, is Snap Distance":
         "retopo 頂点が Ghost に BONDED（配置済み → 緑。Only Unplaced で隠れる）とみなされるための近さ。布の実寸で、平面レイアウトへ変換されます。これは**判定**のしきい値だけです — 「配置済み」が配置済みを意味するよう、小さめ（数 mm）に保ってください。実際に頂点を引き寄せる半径は、G の Ghost Snap も Force Bond も Snap Distance のほうです",
+    "Ring the retopo vertex that OWNS each unplaced ghost — the vertex whose counterpart is missing. The ghost cross itself marks the empty spot on the PARTNER panel, which in a split flat layout is a whole panel away and off screen at working zoom, so without this nothing warns you at the vertex you are actually looking at. Sewn seams only — a free edge's foot sits on the vertex's own outline, close enough that a ring would just blur into the cross. The ring says 'the slot opposite this vertex is empty' — it does not say this vertex is the wrong one; which side ends up unpaired is decided by nearest-neighbour matching within Bond Distance":
+        "未配置 Ghost を**持っている**側の retopo 頂点、つまり相方が居ない頂点にリングを描きます。Ghost のクロス自体は**対岸**パネルの空き位置を指していて、分割された平面レイアウトではパネル1枚ぶん離れており、作業中の拡大率では画面の外です。これが無いと、いま見ている頂点には何の警告も出ません。縫い目のみが対象です——自由端の足は頂点自身の輪郭上にあり、リングを描くとクロスと重なって潰れます。リングの意味は「この頂点の対岸の枠が空いている」であって、「この頂点が間違っている」ではありません。どちら側が余るかは Bond Distance 内の最近傍マッチングで決まります",
+    "Draw the connector line only for unplaced ghosts — the ones that still need work. A placed ghost sits on a vertex that already exists, so its connector is pure confirmation, and on a finished panel those outnumber the unplaced ones by two orders of magnitude and bury them. Turn OFF to get a line for every ghost":
+        "連結線を未配置 Ghost だけに描きます——まだ作業が要るものだけです。配置済み Ghost は既にある頂点の上に乗っているので、その連結線は確認にしかならず、仕上がったパネルでは未配置のものより2桁多くて埋もれさせます。OFF にすると全ての Ghost に線が引かれます",
     "How far (mm) the opening is spread across the surface around each contact. Wider keeps the drape smoother but moves more of it; narrower is more local but starts to show as bumps. About ten times the gap is a good default":
         "各接触点のまわりで、開きを表面上にどれだけ広げて分散させるか (mm)。広いほどドレープは滑らかなままですがより多くが動き、狭いほど局所的ですが凸凹として見え始めます。隙間の 10 倍くらいが良い既定値です",
     "How far (mm of fabric) a Guide vertex may sit from the retopo's 2D footprint and still count as covered. Outside this the residual map shows neutral dark gray. The test itself runs in the flat layout, whose scale depends on how the UV is packed, so this is converted before use — the same number means the same fabric distance whatever the packing":

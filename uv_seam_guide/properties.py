@@ -350,6 +350,35 @@ class AC9SeamGuideProps(PropertyGroup):
         default=False,
         update=prop_redraw,
     )
+    show_orphan_rings: BoolProperty(
+        name="Orphan Rings",
+        description=(
+            "Ring the retopo vertex that OWNS each unplaced ghost — the vertex "
+            "whose counterpart is missing. The ghost cross itself marks the "
+            "empty spot on the PARTNER panel, which in a split flat layout is "
+            "a whole panel away and off screen at working zoom, so without "
+            "this nothing warns you at the vertex you are actually looking at. "
+            "Sewn seams only — a free edge's foot sits on the vertex's own "
+            "outline, close enough that a ring would just blur into the cross. "
+            "The ring says 'the slot opposite this vertex is empty' — it does "
+            "not say this vertex is the wrong one; which side ends up unpaired "
+            "is decided by nearest-neighbour matching within Bond Distance"
+        ),
+        default=True,
+        update=prop_redraw,
+    )
+    ghost_lines_unplaced_only: BoolProperty(
+        name="Lines: Unplaced Only",
+        description=(
+            "Draw the connector line only for unplaced ghosts — the ones that "
+            "still need work. A placed ghost sits on a vertex that already "
+            "exists, so its connector is pure confirmation, and on a finished "
+            "panel those outnumber the unplaced ones by two orders of "
+            "magnitude and bury them. Turn OFF to get a line for every ghost"
+        ),
+        default=True,
+        update=prop_redraw,
+    )
     ghost_color_unplaced: EnumProperty(
         name="Unplaced Ghost Color",
         items=COLOR_ITEMS,

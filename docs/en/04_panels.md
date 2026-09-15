@@ -131,6 +131,12 @@ Object Mode handles the whole outline; Edit Mode handles just the part you've se
 **Free-edge ghosts.** A sewn seam's ghost is the matching point on the opposite side; a free edge has no opposite side. Its ghost is instead **the foot of the perpendicular from the vertex onto the nearest free edge**. A vertex properly on the outline has its foot at its own position, so it reads as placed (green); only vertices that have drifted off the outline keep a red cross and a connector. Combined with **Only Unplaced** this shows exactly the free-edge vertices that are off the pattern.
 The foot is a static point from the last **Refresh Ghosts** and does not follow a drag. To walk a vertex continuously along a hem, use **Snap (G) → Outline** instead.
 
+**The red cross lands on the opposite panel (Orphan Rings).** An unplaced ghost's red cross marks the empty spot on the **partner** panel — the side that is missing a vertex. In a split flat layout that is a whole panel away from the vertex you are looking at, and at working zoom it is off screen. So selecting a vertex that has no partner shows you nothing at the vertex itself. **Orphan Rings** (enabled when **Points** is on) rings the vertex that **owns** that unplaced ghost. Same colour as the cross so the two read as one warning, different shape so it stays obvious which end is the vertex and which is the empty slot. Sewn seams only — a free edge's foot sits right beside its own vertex, close enough that a ring there would blur into the cross.
+
+The ring means "the slot opposite this vertex is empty", not "this vertex is the wrong one". Where a seam has three vertices on one side and two on the other, nearest-neighbour matching within **Bond Distance** pairs two of them and the leftover gets the ring; which one is left over depends on the spacing.
+
+Turn **Lines** on to draw a connector between the vertex and its cross. **Unplaced Lines Only** is on by default, so only unplaced ghosts get a line. A placed ghost's connector only confirms that a vertex is already there, and on a finished panel those outnumber the unplaced ones by two orders of magnitude — drawing them all buries the few that matter.
+
 ### Boundary Settings (sub-panel)
 
 | Setting | Meaning |
@@ -302,7 +308,7 @@ The **Seam Status** toggle only ever comes on with the **Status** preset, and wh
 |---|---|
 | **Seam Lines** | **Seams (cyan)** / **Free Edges (yellow)** / **Pair Lines** / **Fold Lines** / **Twins (magenta)** / **Creases (Find Folds)** / **Outline (white)** — Fold Lines and Twins sit together: they are the two halves of one answer (a panel is either symmetric within itself or has a left/right partner) |
 | **Marks** | a refresh button for **Analyze Anchors** in the header. **Anchors** / **Corners** (Experimental) / **Pins** (Experimental). Turning on **Anchors** without an analysis shows a red warning. Once analyzed, the anchor count and span count are shown |
-| **Ghosts** | a manual refresh (**Refresh Ghosts**) and **×** (**Clear Ghost Points**) in the header. **Selected Only** / **Points** (enables **Only Unplaced** when on) / **Lines** / **Snap Radius** |
+| **Ghosts** | a manual refresh (**Refresh Ghosts**) and **×** (**Clear Ghost Points**) in the header. **Selected Only** / **Points** (enables **Only Unplaced** and **Orphan Rings** when on) / **Lines** (enables **Unplaced Lines Only** when on) / **Snap Radius** |
 | **Status** | **Vertex Counts** / **Seam Status** / **Boundary Flags** |
 | **Mirror** | **Selection Link** — draws orange markers at the live Guide projection for a 2D selection, or at the Refresh-time 2D source position for a Mirror selection. Works for vertex, edge, face, loop, and shortest-path selections. A vertex created directly on the disposable Mirror has no source marker until Refresh rebuilds it |
 | **Guide** | an **Islands** slider (**Alpha**) and **Bake** / **×** — detects the Guide's UV islands, writes them to a color attribute, and builds a simple material to display it. Not a GPU overlay, but it's kept here since it answers the same question of "what does the Guide look like" |
