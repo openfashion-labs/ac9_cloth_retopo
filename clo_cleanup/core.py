@@ -1485,42 +1485,11 @@ def _inset_pieces_2d(bm, width, margin=ABSORB_MARGIN, sharp_inner=True,
 
         def _regions(region, tag, rungs):
             """Sub-regions of `region`: cut by the rungs and by the crease
-            constraint lines (polygonize of the noded boundary + cuts), or
-            [region] itself when there is nothing to cut with."""
+            constraint lines."""
             cuts = list(rungs)
             if crease_geom is not None and not region.is_empty and crease_geom.intersects(region):
                 cuts.extend(shapely.get_parts(crease_geom.intersection(region)))
-            if not cuts or region.is_empty:
-                return _polys(region)
-            rings = []
-            for pg in _polys(region):
-                rings.append(LineString(list(pg.exterior.coords)))
-                for r in pg.interiors:
-                    rings.append(LineString(list(r.coords)))
-            noded = shapely.node(shapely.union_all(rings + cuts))
-            faces_geom = shapely.polygonize(list(shapely.get_parts(noded)))
-            rp = prep(region)
-            out = []
-            for pg in _polys(faces_geom):
-                if pg.area <= 1e-18:
-                    stats[tag + '_regions_tiny'] += 1
-                    continue
-                # polygonize also returns the INTERIOR of every hole ring as a
-                # face: those are far from `region` and dropped. A sliver face
-                # of the region itself can have its representative point ON
-                # the boundary, where contains() is False — keep anything
-                # within float32 resolution of the region (11 such slivers per
-                # garment measured, each one a hole otherwise).
-                rpt = pg.representative_point()
-                if rp.contains(rpt) or region.distance(rpt) < F32_TOL:
-                    out.append(pg)
-                else:
-                    stats[tag + '_regions_outside'] += 1
-            stats[tag + '_regions'] += len(out)
-            cover = sum(pg.area for pg in out)
-            if abs(cover - region.area) > 1e-12 + 1e-6 * region.area:
-                stats[tag + '_regions_area_gap'] += 1
-            return out or _polys(region)
+            return _cut_regions(region, cuts, stats, tag)
 
         S_regions = _regions(S, 'S', rungs_S)
         G_regions = _regions(G, 'G', rungs_G)
@@ -1650,6 +1619,90 @@ def _inset_pieces_2d(bm, width, margin=ABSORB_MARGIN, sharp_inner=True,
     stats['row_edges'] = len(row_edges_all)
     tick(0.95)
     return dict(stats)
+
+
+def _cut_regions(region, cuts, stats, tag):
+    """Sub-regions of `region`, cut by `cuts` (polygonize of the noded
+    boundary + cuts), or [region] itself when there is nothing to cut with.
+
+    Shared by both insets: the rungs that keep the ear-clipping CDT from
+    spanning a wide region with slivers are just extra lines in the
+    arrangement (see the rung comment in `_inset_pieces_2d`)."""
+    import shapely
+    from shapely.geometry import LineString
+    from shapely.prepared import prep
+
+    cuts = [c for c in cuts if c is not None and not c.is_empty]
+    if region is None or region.is_empty or not cuts:
+        return _polys(region) if region is not None else []
+    rings = []
+    for pg in _polys(region):
+        rings.append(LineString(list(pg.exterior.coords)))
+        for r in pg.interiors:
+            rings.append(LineString(list(r.coords)))
+    noded = shapely.node(shapely.union_all(rings + cuts))
+    faces_geom = shapely.polygonize(list(shapely.get_parts(noded)))
+    rp = prep(region)
+    out = []
+    for pg in _polys(faces_geom):
+        if pg.area <= 1e-18:
+            stats[tag + '_regions_tiny'] += 1
+            continue
+        # polygonize also returns the INTERIOR of every hole ring as a face:
+        # those are far from `region` and dropped. A sliver face of the region
+        # itself can have its representative point ON the boundary, where
+        # contains() is False — keep anything within float32 resolution of the
+        # region (11 such slivers per garment measured, each one a hole
+        # otherwise).
+        rpt = pg.representative_point()
+        if rp.contains(rpt) or region.distance(rpt) < F32_TOL:
+            out.append(pg)
+        else:
+            stats[tag + '_regions_outside'] += 1
+    stats[tag + '_regions'] += len(out)
+    cover = sum(pg.area for pg in out)
+    if abs(cover - region.area) > 1e-12 + 1e-6 * region.area:
+        stats[tag + '_regions_area_gap'] += 1
+    return out or _polys(region)
+
+
+def _register_region_coords(bm, regions, vmap, stats):
+    """Every boundary coordinate of `regions` must be a mesh vertex before the
+    CDT runs. Reuse anything within float32 resolution (a coordinate the
+    noding moved by a few ulps must not become a second vertex beside the
+    first — that is a crack), else create one."""
+    near_list = [v for v in vmap.values() if v.is_valid]
+    if not near_list:
+        return
+    near_kd = kdtree.KDTree(len(near_list))
+    for i, v in enumerate(near_list):
+        near_kd.insert(v.co, i)
+    near_kd.balance()
+    pending = []
+    for pg in regions:
+        for ring in _ring_coords(pg):
+            for (x, y) in ring:
+                kk = _key(x, y)
+                if kk in vmap:
+                    continue
+                _co, i, dd = near_kd.find(Vector((x, y, 0.0)))
+                if dd is not None and dd < F32_TOL:
+                    vmap[kk] = near_list[i]
+                    stats['ring_vert_reused'] += 1
+                    continue
+                hit = None
+                for (px, py, pv) in pending:
+                    if abs(px - x) < F32_TOL and abs(py - y) < F32_TOL:
+                        hit = pv
+                        break
+                if hit is not None:
+                    vmap[kk] = hit
+                    stats['ring_vert_reused'] += 1
+                    continue
+                nv = bm.verts.new((x, y, 0.0))
+                vmap[kk] = nv
+                pending.append((x, y, nv))
+                stats['row_verts'] += 1
 
 
 def _densify_rows(Q, bverts, width, stats, priority=()):
@@ -2318,16 +2371,68 @@ def _inset_line_2d(bm, chain_edges, width, basis_lay, margin=ABSORB_MARGIN,
         if not ring_lines:
             stats['band_empty'] += 1
             continue
-        R2 = shapely.polygonize(ring_lines)
+        # R2 is R again, rebuilt from the rings after they were densified and
+        # snapped; it is what decides which polygonized face counts as band.
+        # polygonize wants NODED linework (see shapely.node below): handed a
+        # ring that touches itself it returns NOTHING, and the whole band
+        # inside that ring is then filtered out of `regions` — with its faces
+        # already deleted. Node first, and check the area against R.
+        R2 = shapely.polygonize(list(shapely.get_parts(
+            shapely.node(shapely.union_all(ring_lines)))))
         R2 = shapely.union_all(list(R2.geoms)) if hasattr(R2, 'geoms') else R2
+        if R.area > 0.0 and abs(R2.area - R.area) > 0.02 * R.area:
+            stats['band_clip_area_gap'] += 1
         chain_lines = [LineString([(e.verts[0].co.x, e.verts[0].co.y),
                                    (e.verts[1].co.x, e.verts[1].co.y)])
                        for e in d['edges']]
+        # --- rungs, as in _inset_pieces_2d: GEOS triangulates a polygon by
+        #     clipping ears, so a band region wider than a strip comes out as
+        #     slivers fanned from one corner. A plain fold is a strip and is
+        #     fine; where the line BRANCHES, or where two folds run closer
+        #     than 2 W and their bands merge, the region is a blob whose only
+        #     vertices are on its rim (measured on a legwear export with a
+        #     61-branch network, 2026-09-15: 9.58 mm edges and needle fans in
+        #     a mesh whose own longest flat edge is 4.83 mm). A rung from each
+        #     chain vertex to its foot on each side cuts the blob into cells
+        #     the triangulator cannot get wrong. Both ends must be EXISTING
+        #     coordinates, the rung must stay inside the band, and it must not
+        #     CROSS the fold itself — the fold's own edges have to survive.
+        rpts = [c for line in ring_lines for c in list(line.coords)[:-1]]
+        r_kd = kdtree.KDTree(len(rpts))
+        for i, c in enumerate(rpts):
+            r_kd.insert(Vector((c[0], c[1], 0.0)), i)
+        r_kd.balance()
+        chain_geom = shapely.union_all(chain_lines)
+        R2_prep = prep(R2)
+        rungs_B = []
+        for v in chain_set:
+            found = []
+            for (_c, i, dd) in sorted(r_kd.find_range(v.co, width * 1.3),
+                                      key=lambda t: t[2]):
+                if dd is None or dd <= F32_TOL:
+                    continue
+                x, y = rpts[i]
+                ux, uy = x - v.co.x, y - v.co.y
+                L = math.hypot(ux, uy)
+                if L <= 0.0:
+                    continue
+                ux, uy = ux / L, uy / L
+                if any(ux * ax + uy * ay > 0.7 for (ax, ay) in found):
+                    continue        # the side this one points at is done
+                line = LineString([(v.co.x, v.co.y), (x, y)])
+                if line.crosses(chain_geom) or not R2_prep.covers(line):
+                    stats['rungs_B_outside'] += 1
+                    continue
+                rungs_B.append(line)
+                found.append((ux, uy))
+                if len(found) >= 4:
+                    break
+        stats['rungs_B'] += len(rungs_B)
         # polygonize needs the linework split at every node: a ring that
         # merely PASSES THROUGH a chain end as one of its vertices is still
         # one edge to it and does not get split (measured: 1 face instead of
         # 2). shapely.node cuts the rings at the chain ends.
-        noded = shapely.node(shapely.union_all(ring_lines + chain_lines))
+        noded = shapely.node(shapely.union_all(ring_lines + chain_lines + rungs_B))
         faces_geom = shapely.polygonize(list(shapely.get_parts(noded)))
         R_prep = prep(R2)
         regions = []
@@ -2393,10 +2498,41 @@ def _inset_line_2d(bm, chain_edges, width, basis_lay, margin=ABSORB_MARGIN,
         gap = hole.difference(band_geom)
         if not gap.is_valid:
             gap = gap.buffer(0)
+        # The gap is the part of the deleted patch the band does not cover.
+        # Its own interior vertices went with the faces, so on a coarse mesh
+        # it is a ring several triangles wide with nothing inside it and the
+        # CDT bridges it with 6-8 mm diagonals. Same rungs as G in
+        # _inset_pieces_2d: band rim vertex -> nearest surviving vertex of the
+        # hole's rim.
+        hole_verts = [v for v in verts if v.is_valid and v.link_faces]
+        rungs_R = []
+        if not gap.is_empty and hole_verts:
+            h_kd = kdtree.KDTree(len(hole_verts))
+            for i, v in enumerate(hole_verts):
+                h_kd.insert(v.co, i)
+            h_kd.balance()
+            gap_prep = prep(gap)
+            for (x, y) in rpts:
+                _co, i, dd = h_kd.find(Vector((x, y, 0.0)))
+                if dd is None or dd <= 0.0 or dd > 3.0 * width:
+                    continue
+                hv = hole_verts[i]
+                line = LineString([(x, y), (hv.co.x, hv.co.y)])
+                if gap_prep.covers(line):
+                    rungs_R.append(line)
+                else:
+                    stats['rungs_R_outside'] += 1
+        stats['rungs_R'] += len(rungs_R)
+        gap_regions = _cut_regions(gap, rungs_R, stats, 'R')
+        # a rung crossing, or a node the arrangement put on a rim edge, is a
+        # coordinate no ring carried: give it a vertex before the CDT asks
+        _register_region_coords(bm, regions + gap_regions, vmap, stats)
         band_faces = []
         for pg in regions:
             band_faces.extend(_cdt_faces(bm, pg, vmap, ccw, stats, 'B'))
-        gap_faces = _cdt_faces(bm, gap, vmap, ccw, stats, 'R')
+        gap_faces = []
+        for pg in gap_regions:
+            gap_faces.extend(_cdt_faces(bm, pg, vmap, ccw, stats, 'R'))
         for f in band_faces:
             f[blay] = 1
         stats['band_faces'] += len(band_faces)
@@ -2543,25 +2679,70 @@ def _densify_ring(ring_coords, chain_pts, width, stats):
     simplifies before buffering, so the offset comes back with fewer vertices
     than the chain). A foot within 1 nm of a chain vertex — a chain END, which
     lies on the flat cap — is replaced by the chain vertex's exact coordinate
-    so the polygonize is properly noded there."""
+    so the polygonize is properly noded there.
+
+    Everything here is ordered by the ring's OWN arc length, walked segment by
+    segment. `LineString.project()` returns the arc length of the point
+    nearest ON THE WHOLE RING, and the ring of a fold band runs back down the
+    other side of the fold 2 W away — and closer still where two folds are
+    within 2 W of each other and their bands merged. A coordinate then sorts
+    into the wrong place, and the ring comes back SELF-INTERSECTING: measured
+    on a legwear export, `shapely.polygonize` returned nothing at all for such
+    a ring, so the whole 1475 mm2 band it enclosed was dropped from the clip
+    while its faces had already been deleted — the fold there was rebuilt as
+    plain gap and 13 of its edges were swept away with the loose vertices.
+
+    For the same reason a chain vertex gets one foot per LOCAL approach of the
+    ring instead of one at the global nearest point: the two sides of the band
+    are both exactly W away, so a single projection densifies one of them and
+    leaves the other with whatever vertices GEOS's simplification left it
+    (measured: 9.58 mm ring edges opposite a fully densified side)."""
+    import shapely
     from shapely.geometry import LineString, Point
 
-    ring = LineString(list(ring_coords) + [ring_coords[0]])
-    L = ring.length
+    n = len(ring_coords)
     chain_set = set(chain_pts)
-    pts = [(ring.project(Point(c)), c) for c in ring_coords]
+    segs = [LineString([ring_coords[i], ring_coords[(i + 1) % n]])
+            for i in range(n)]
+    cum = [0.0] * (n + 1)
+    for i, s in enumerate(segs):
+        cum[i + 1] = cum[i] + s.length
+    L = cum[n]
+    pts = [(cum[i], c) for i, c in enumerate(ring_coords)]
+    tree = shapely.STRtree(segs)
+    reach = width * 1.5
     for c in chain_pts:
         p = Point(c)
-        d = ring.distance(p)
-        if d > width * 1.5:
+        idx = sorted(int(i) for i in tree.query(p.buffer(reach)))
+        if not idx:
             continue
-        s = ring.project(p)
-        if d < 1e-9:
-            pts.append((s, c))          # exact: the chain end on the cap
-            stats['line_end_noded'] += 1
-        else:
-            q = ring.interpolate(s)
-            pts.append((s, (q.x, q.y)))
+        # contiguous runs of candidate segments = one approach of the ring to
+        # this vertex; the ring is closed, so a run can wrap around the end
+        runs = []
+        for i in idx:
+            if runs and i == runs[-1][-1] + 1:
+                runs[-1].append(i)
+            else:
+                runs.append([i])
+        if len(runs) > 1 and runs[0][0] == 0 and runs[-1][-1] == n - 1:
+            runs[0] = runs.pop() + runs[0]
+        for run in runs:
+            best = None
+            for i in run:
+                dd = segs[i].distance(p)
+                if dd <= reach and (best is None or dd < best[0]):
+                    best = (dd, i)
+            if best is None:
+                continue
+            dd, i = best
+            t = segs[i].project(p)
+            q = segs[i].interpolate(t)
+            s = cum[i] + t
+            if dd < 1e-9:
+                pts.append((s, c))      # exact: the chain end on the cap
+                stats['line_end_noded'] += 1
+            else:
+                pts.append((s, (q.x, q.y)))
     pts.sort(key=lambda t: t[0])
     tol = width * 0.05
     out = []
