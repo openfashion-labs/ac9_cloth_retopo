@@ -55,7 +55,9 @@ The version number is the one in `blender_manifest.toml`; each release is tagged
   no longer backs up is left whole and reported instead (measured on a welded
   Guide: 1,552 → 3,760 boundary edges becomes 1,552 → 3,292; on another,
   5,494 pointless splits become none).
-- **Finalize** drops the add-on's own working materials from the delivered mesh.
+- **Finalize** drops everything the add-on leaves behind from the delivered mesh:
+  its working materials, the mesh-level custom property recording which Guide the
+  retopo was bound to, and the weightless marker vertex groups.
 
 ### Fixed
 
