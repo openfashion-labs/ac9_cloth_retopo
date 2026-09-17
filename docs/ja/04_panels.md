@@ -201,7 +201,7 @@ Mirror（2D リトポの閲覧専用 3D 表示）と、Guide を平面で見る�
 | **3D Source** | 投影とマップが Guide の 3D 形状として読むシェイプキー。**Original**（Basis、書き出したままのドレープ。最終リトポ用）/ **Separated**（`AC9_Separated`、ベイク中用） | 分離済み | 切り替えると Guide の三角形キャッシュが破棄される。Mirror と投影は次の **Refresh** で追いつく |
 | **Align → To Outline** | Guide の型紙外周（UV シーム辺）から **Threshold** 以内の各頂点について、2D 位置を辺上へスナップし、バリセントリック座標の 1 つがちょうど 0 になるようアタッチメントを作り直す。境界フラグも立てる | Guide + Retopo / Experimental ON | 旧 **Sync 3D > 2D** が外周にぴったり留めるための前処理。**Sync 2D > 3D** のあと 1 度実行する |
 | **Threshold** | 上のスナップ許容距離（既定 0.003 = 3 mm） | Experimental ON | 大きすぎると内部頂点まで境界と誤判定される |
-| **Finalize → Finalize** | Retopo + Guide の投影を素のメッシュ `<Retopo名>_Final` に焼く。形状 = Guide への投影、UV = 2D レイアウト、シェイプキーなし、`ac9_*` データなし | Object Mode / Retopo・Guide・Flat SK が揃っている | Retopo は触られない（平面のまま、編集可能なまま）。何度でも実行できる。作られた `_Final` が選択・アクティブになる |
+| **Finalize → Finalize** | Retopo + Guide の投影を素のメッシュ `<Retopo名>_Final` に焼く。形状 = Guide への投影、UV = 2D レイアウト、シェイプキーなし。アドオンの残骸（`ac9_*` の属性とカスタムプロパティ、`AC9_` の作業用マテリアル、印用の頂点グループ）はすべて剥がされる | Object Mode / Retopo・Guide・Flat SK が揃っている | Retopo は触られない（平面のまま、編集可能なまま）。何度でも実行できる。作られた `_Final` が選択・アクティブになる |
 | **Finalize → Close Seam Gaps** | 縫い目の両側を同じ 3D 座標へ引き寄せる（既定 ON） | 同上 | 位置だけを変え、頂点の作成・削除・マージはしない。UV アイランドは分かれたまま |
 | **Finalize → Weld Seam Vertices** | 同じ位置になった縫い目の頂点を 1 個にマージする（既定 OFF） | 上が ON のとき | 溶接すると縫い目が境界辺でなくなる |
 

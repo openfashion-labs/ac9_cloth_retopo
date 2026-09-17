@@ -201,6 +201,15 @@ class AC9_OT_FinalizeRetopo(bpy.types.Operator):
             for key in [k for k in me.keys() if k.startswith("ac9_")]:
                 del me[key]
 
+            # Vertex group names live on the mesh, so the copy shows the
+            # projector's AC9_Project_Failed marker (and the NK_ name it used
+            # before the rename) even on a brand-new object, weightless and
+            # meaningless outside the working retopo. Only the add-on's own
+            # groups go: anything the user put there is theirs.
+            for group in [g for g in final.vertex_groups
+                          if g.name.startswith(("AC9_", "NK_"))]:
+                final.vertex_groups.remove(group)
+
             # Material slots ride along in data.copy() the same way attributes
             # do, and the add-on puts working materials on the retopo itself
             # (the Guide Maps ghost that makes it see-through, Island
