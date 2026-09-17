@@ -33,6 +33,8 @@ _OPERATOR_CLASSES = (
     operators.AC9_OT_BakeSagMap,
     operators.AC9_OT_BakeDrapeMap,
     operators.AC9_OT_BakePreviewPlane,
+    operators.AC9_OT_AddTransparentMaterial,
+    operators.AC9_OT_RemoveTransparentMaterial,
     operators.AC9_OT_DeleteMapImage,
     operators.AC9_OT_DeleteGuideMaps,
     operators.AC9_OT_DeleteAllMaps,

@@ -54,7 +54,7 @@ VGROUP_NAME = _pcore.FAILED_GROUP_NAME          # AC9_Project_Failed
 MIRROR_PROP = _mirror.MIRROR_PROP               # ac9_mirror_of
 PREVIEW_PLANE_NAME = _bpreview.PLANE_OBJ_NAME   # AC9_BakePreview (object/mesh)
 MATERIAL_NAMES = (_pops._ISLAND_MAT_NAME, "AC9_BakeMap_Temp",
-                  _bpreview.PREVIEW_MAT_NAME)
+                  _bpreview.PREVIEW_MAT_NAME) + _bpreview.GHOST_MAT_NAMES
 # Bake images are matched by _bcore.is_map_image: a base name on its own
 # (older files), the per-Guide "<base>_<Guide name>" that every bake writes
 # now, or a numbered copy. The base is specific enough that the product name

@@ -66,6 +66,7 @@ import bpy
 
 # Operator bl_labels: registered under both "Operator" and "*" (see docstring).
 _OPERATOR_LABELS = {
+    "Add Transparent Material": "半透明マテリアルを追加",
     "Adjust Density": "密度を調整",
     "Align Boundary to Outline": "Boundary を輪郭に整列",
     "Analyze Anchors": "Anchor を解析",
@@ -126,6 +127,7 @@ _OPERATOR_LABELS = {
     "Refresh Ghosts": "Ghost を更新",
     "Refresh Mirror": "Mirror を更新",
     "Remove Mirror": "Mirror を削除",
+    "Remove Transparent Material": "半透明マテリアルを削除",
     "Replace Twin Island": "Twin アイランドを置換",
     "Reset Settings": "設定をリセット",
     "Seam Status": "Seam ステータス",
@@ -387,6 +389,7 @@ _UI_STRINGS = {
     "Corner Color": "Corner の色",
     "Corner Marker Size": "Corner マーカーサイズ",
     "AO Distance": "AO 距離",
+    "Curvature Radius": "Curvature 半径",
     "AO Mix": "AO 合成比",
     "Coverage Margin": "被覆マージン",
     "Crease Min Angle": "クリース最小角度",
@@ -822,6 +825,8 @@ _UI_STRINGS = {
     "Decimal places for flat-coordinate duplicate detection": "平面座標の重複判定に使う小数桁数",
     "Detect Candidates proposes a corner wherever the pattern outline turns at least this much. It only ever proposes — the set is yours to edit afterwards":
         "Detect Candidates は、型紙の輪郭がこれ以上曲がる場所に Corner を提案します。あくまで提案するだけで、その後の取捨選択は作業者に任されます",
+    "The scale of detail (mm) the drape Curvature reports. The Guide is smoothed with a kernel this wide and the map shows how far the surface sits above that smoothed copy along its normal: white is convex (a ridge), black concave (a fold), mid grey flat. Features much wider than the radius are smoothed away with the reference and disappear; set it near the width of the ridges you cut along. Cost rises with the square of the radius":
+        "Curvature が拾う凹凸のスケール（mm）。この幅で Guide を平滑化し、平滑化した形から法線方向にどれだけ浮いているかを出す。白＝凸（稜線）、黒＝凹（折り目）、中間のグレー＝平ら。半径よりずっと広い起伏は基準ごと平滑化されて消えるので、切りたい稜線の幅くらいに合わせる。コストは半径の2乗で増える",
     "How far (mm) the drape AO looks for occluders — the scale of detail the map reports. Around a fold's own width it draws folds; far above that it only reports how enclosed a region is, and any panel sewn flat onto another (pocket, placket, tab) goes solid black because its neighbour is well inside the distance. The Guide occludes itself only — the body never darkens it":
         "Drape の AO が遮蔽物を探す距離 (mm)。マップが拾うディテールのスケールそのもので、皺の幅くらいなら皺が描かれます。それよりずっと大きいとその領域が囲まれているかどうかしか出ず、他の型紙に密着して縫われた型紙（ポケット・当て布・タブ）は相手が距離の内側に入りきるので真っ黒になります。遮蔽するのは Guide 自身だけで、身体がマップを暗くすることはありません",
     "How much of the AO goes into the combined Drape map, which is Curvature x (1 - mix + mix x AO) — the same arithmetic as a Mix node set to MULTIPLY with this as its Factor. At 1.0 the AO's dark folds bury the Curvature creases you are actually cutting along, so it is eased off by default":
@@ -858,6 +863,8 @@ _UI_STRINGS = {
         "インセットの半幅（布の実寸）: 新しい頂点列は輪郭からこの距離だけ内側（Inset Pieces）または折れ線の両側（Inset Line）に置かれ、その帯の中にあった元のジオメトリは新しい三角形に置き換えられます。大きくするとシェーディングのグラデーションが緩やかになります。インセットは平面レイアウト上で走り、その倍率は UV の詰め方で変わるので、値は使用前に変換されます——どちらの詰め方でも 1mm は布の 1mm です。レポートには帯の幅が輪郭の頂点間隔の何倍かが出ます。0.5 倍前後が通常の動作点です",
     "Half-width of the topology-corner diamonds (flat-layout world units)":
         "トポロジー Corner のひし形マーカーの半幅（平面レイアウトのワールド単位）",
+    "How see-through the Retopo Mesh's working material makes it, so the Preview Plane 5 mm underneath reads through the faces you are cutting. 0 = invisible, 1 = solid. The value is kept on the AC9_RetopoTransparent material itself, so it is saved in the .blend and nothing in Preferences is touched — unlike the Retopology overlay, whose transparency is a theme colour shared by every file. Solid and Material Preview read different properties for this (measured), and this slider writes both":
+        "Retopo Mesh に付けた作業用マテリアルの透け具合。5mm 下の Preview Plane が、いま切っている面越しに読めるようになります。0 = 完全に透明、1 = 不透明。値は AC9_RetopoTransparent マテリアル自身が持つので .blend に保存され、プリファレンスには一切触れません（Retopology オーバーレイの透明度はテーマの色で、全ファイル共通になってしまいます）。Solid と Material Preview はこれに別々のプロパティを見る実測結果なので、このスライダーは両方に書き込みます",
     "How close a retopo boundary vertex must be to a Guide seam to count as sitting on it. Vertices further away are cuts through the middle of a panel and are left alone. In real fabric distance: the test runs in the flat layout, whose scale depends on the UV packing, so the value is converted before use":
         "retopo の境界頂点が Guide の縫い目上にあるとみなす距離。これより離れた頂点はパネル中央を貫くカットとして扱われ、手を付けません。単位は布の実寸で、判定は平面レイアウト上で走り、その倍率は UV の詰め方で変わるので、値は使用前に変換されます",
     "How close a retopo vertex must be to a ghost to count as BONDED (placed → green, and hidden by Only Unplaced). In the cloth's real dimensions, converted into the flat layout. This is a CLASSIFICATION threshold only — keep it small (a few mm) so 'placed' still means placed. The radius that actually pulls vertices, both for Ghost Snap on G and for Force Bond, is Snap Distance":

@@ -27,8 +27,11 @@ PLANE_MESH_NAME = "AC9_BakePreview"
 # retopo. Below it, the retopo stays the thing you touch — at the cost that
 # anything else lying flat at z = 0 (the Guide in its Flat SK pose, the flat
 # retopo, a hand-made bake board) covers the plane when the viewport looks
-# down from above, and has to be hidden by hand. 5 mm is invisible from the
-# top view and clear of any Solidify thickness on the Guide.
+# down from above. The retopo is the one that cannot simply be hidden, since
+# it is what you are cutting: the ghost material at the bottom of this module
+# is the answer for that one. The rest have to be hidden by hand. 5 mm is
+# invisible from the top view and clear of any Solidify thickness on the
+# Guide.
 PLANE_DROP = 0.005
 PREVIEW_MAT_NAME = "AC9_BakePreview"
 _TEX_NODE_NAME = "AC9_PreviewTex"
@@ -143,17 +146,26 @@ def set_material_shading(context) -> str:
     material. Areas already in Material Preview / Rendered shading are left
     alone — an Emission material shows there already.
 
-    The Retopology overlay goes on rather than X-Ray: X-Ray makes the whole
-    retopo semi-transparent, which is the wrong thing to be looking at while
-    cutting. Note that Retopology only lifts the mesh being EDITED clear of
-    what is behind it — it is not what makes this plane visible. Anything
-    lying flat at z = 0 still covers the plane and has to be hidden by hand.
+    Neither X-Ray nor the Retopology overlay is turned on; both are taken
+    back off. X-Ray makes the whole scene semi-transparent, which is the wrong
+    thing to be looking at while cutting. The Retopology overlay replaces the
+    edit-mesh face fill with the theme's `face_retopology` colour (measured
+    alpha 0.502 on 5.0.1), which means it OVERRIDES the ghost material in Edit
+    Mode — with it on, the retopo cannot be made any more transparent than the
+    theme says, and the theme is a Preference shared by every file. Clearing
+    it is not optional housekeeping: an earlier version of this add-on wrote
+    it on, and `show_retopology` is stored per 3D View inside the .blend
+    (measured: survives save and reload), so files that version touched still
+    carry it and would defeat the ghost.
+
+    Anything else lying flat at z = 0 still covers the plane and has to be
+    hidden by hand.
     """
     screen = getattr(context, "screen", None)
     if screen is None:
         return ""
     shading_changed = False
-    overlay_changed = False
+    retopology_cleared = False
     xray_cleared = False
 
     for area in screen.areas:
@@ -166,20 +178,228 @@ def set_material_shading(context) -> str:
             if sh.type == 'SOLID' and sh.color_type != 'TEXTURE':
                 sh.color_type = 'TEXTURE'
                 shading_changed = True
-            # X-Ray is never ours to turn on; if an earlier version of this
-            # addon left it on, take it back off.
+            # Neither of these is ours to turn on; if an earlier version of
+            # this add-on left one on, take it back off.
             if sh.show_xray:
                 sh.show_xray = False
                 xray_cleared = True
-            if not space.overlay.show_retopology:
-                space.overlay.show_retopology = True
-                overlay_changed = True
+            if space.overlay.show_retopology:
+                space.overlay.show_retopology = False
+                retopology_cleared = True
 
     notes = []
     if shading_changed:
         notes.append("Solid colour = Texture")
-    if overlay_changed:
-        notes.append("Retopology overlay on")
+    if retopology_cleared:
+        notes.append("Retopology overlay off")
     if xray_cleared:
         notes.append("X-Ray off")
     return ", ".join(notes)
+
+
+# ---------------------------------------------------------------------------
+# The retopo ghost material
+#
+# The plane sits BELOW the flat retopo, so the retopo hides it from the top
+# view. Making the retopo itself semi-transparent is what lets the map and the
+# mesh being cut be read at the same time.
+#
+# Which knob does that is not obvious, and the two shading modes disagree.
+# Measured on 5.0.1 with a blue plane over a red one, sampling the pixel where
+# they overlap:
+#
+#   Workbench (Solid)   diffuse_color alpha 1.0   -> (0.00, 0, 1.00) opaque
+#                       diffuse_color alpha 0.367 -> (0.82, 0, 0.64) blended
+#                       Principled Alpha 0.367    -> (0.00, 0, 1.00) no effect
+#                       blend_method BLEND        -> identical to HASHED
+#   EEVEE               diffuse_color alpha 0.367 -> opaque, no effect
+#                       Principled Alpha 0.367    -> blended, and blend_method
+#                                                    decides dithered vs alpha
+#
+# So Solid reads ONLY `diffuse_color[3]` and EEVEE reads ONLY the Principled
+# Alpha. Dropping the node tree to dodge that does not work either: on 5.0
+# `use_nodes = False` does not stick (it reads back True with a tree). Both
+# knobs are therefore written together from the panel's one slider, and the
+# material tells the same story in Solid and in Material Preview.
+# ---------------------------------------------------------------------------
+
+GHOST_MAT_NAME = "AC9_RetopoTransparent"
+# What this material was called while the panel's slider was labelled
+# "Ghost". The Seam overlays already own that word (Ghost Points / Ghost
+# Lines), so the slider is "Alpha" and the material follows the button
+# that makes it. Files written before the rename are still found and
+# reused under the old name, alpha and all.
+GHOST_MAT_NAME_LEGACY = "AC9_RetopoGhost"
+GHOST_MAT_NAMES = (GHOST_MAT_NAME, GHOST_MAT_NAME_LEGACY)
+GHOST_DEFAULT_ALPHA = 0.35
+
+
+def find_ghost_material():
+    """The file's ghost material, or None.
+
+    Looked up by name and reused rather than re-created, so the alpha the user
+    settled on comes back with the file — it is stored on the material, which
+    keeps this out of Preferences (the theme's Retopology colour, the only
+    other way to make a retopo see-through, is shared by every file).
+    """
+    for name in GHOST_MAT_NAMES:
+        mat = bpy.data.materials.get(name)
+        if mat is not None:
+            return mat
+    return None
+
+
+def _ghost_bsdf(mat):
+    """The material's Principled BSDF node, or None."""
+    nt = getattr(mat, "node_tree", None)
+    if nt is None:
+        return None
+    for node in nt.nodes:
+        if node.type == 'BSDF_PRINCIPLED':
+            return node
+    return None
+
+
+def ghost_material_on(retopo):
+    """The transparent working material actually assigned to *retopo*."""
+    me = getattr(retopo, "data", None)
+    if me is None or not hasattr(me, "materials"):
+        return None
+    return next((mat for mat in me.materials if _is_ghost(mat)), None)
+
+
+def get_ghost_alpha(retopo=None) -> float:
+    """How transparent the ghost currently is; the default when there is no
+    ghost material in the file yet."""
+    mat = ghost_material_on(retopo) if retopo is not None else None
+    if mat is None:
+        mat = find_ghost_material()
+    return GHOST_DEFAULT_ALPHA if mat is None else mat.diffuse_color[3]
+
+
+def set_ghost_alpha(value: float, retopo=None) -> None:
+    """Write one slider to both knobs — see the note above."""
+    mat = ghost_material_on(retopo) if retopo is not None else None
+    if mat is None:
+        mat = find_ghost_material()
+    if mat is None:
+        return
+    r, g, b, _a = mat.diffuse_color
+    mat.diffuse_color = (r, g, b, value)
+    bsdf = _ghost_bsdf(mat)
+    if bsdf is not None:
+        bsdf.inputs["Alpha"].default_value = value
+
+
+def ensure_ghost_material():
+    """The file's ghost material, created on first use.
+
+    An existing one is returned untouched: its alpha is the user's setting,
+    not something to reset every time the button is pressed.
+    """
+    mat = find_ghost_material()
+    if mat is not None:
+        return mat
+    mat = bpy.data.materials.new(GHOST_MAT_NAME)
+    mat.use_nodes = True
+    # Material Preview only; Solid ignores it. Material.shadow_method is gone
+    # as of 4.2 (EEVEE Next) and blend_method may follow, so it is guarded.
+    if hasattr(mat, "blend_method"):
+        mat.blend_method = 'BLEND'
+    bsdf = _ghost_bsdf(mat)
+    if bsdf is not None:
+        bsdf.inputs["Base Color"].default_value = (0.8, 0.8, 0.8, 1.0)
+    mat.diffuse_color = (0.8, 0.8, 0.8, GHOST_DEFAULT_ALPHA)
+    set_ghost_alpha(GHOST_DEFAULT_ALPHA)
+    return mat
+
+
+def _is_ghost(mat) -> bool:
+    return mat is not None and any(
+        mat.name == name or mat.name.startswith(name + ".")
+        for name in GHOST_MAT_NAMES
+    )
+
+
+def ghost_is_on(retopo) -> bool:
+    """True when the retopo is currently carrying the ghost."""
+    me = getattr(retopo, "data", None)
+    if me is None or not hasattr(me, "materials"):
+        return False
+    return any(_is_ghost(m) for m in me.materials)
+
+
+def blocking_material(retopo):
+    """The name of something already in the retopo's material slots, or None
+    when the ghost can be added safely.
+
+    A working retopo carries no material at all — finalize.py puts it plainly:
+    "the retopo is a working mesh nobody shades". When one IS there, the slot
+    layout belongs to the user: overwriting slot 0 would hide their shading,
+    and appending a slot would leave every polygon still pointing at index 0,
+    so the ghost would be added and nothing would change. Rewriting
+    material_index across the mesh is not this tool's call. It refuses instead
+    and says what is in the way.
+    """
+    me = getattr(retopo, "data", None)
+    if me is None or not hasattr(me, "materials"):
+        return None
+    for mat in me.materials:
+        if not _is_ghost(mat):
+            return mat.name if mat is not None else "an empty material slot"
+    return None
+
+
+def add_ghost(retopo):
+    """Put the ghost on the retopo. Returns (material, error message)."""
+    blocker = blocking_material(retopo)
+    if blocker is not None:
+        return None, (f"'{retopo.name}' already carries {blocker} — its "
+                      f"material slots are left alone. Remove it first, or "
+                      f"work without the ghost")
+    mat = ensure_ghost_material()
+    if ghost_is_on(retopo):
+        return mat, None
+    # The mesh has no slots at all here, so the appended material lands at
+    # index 0 and every polygon's material_index (0 by default) already points
+    # at it — measured: 0 slots -> append -> 1 slot, face indices [0].
+    retopo.data.materials.append(mat)
+    return mat, None
+
+
+def clear_retopology_overlay() -> int:
+    """Switch the Retopology overlay off in EVERY 3D view of every workspace,
+    and return how many were on.
+
+    Wider than set_material_shading, which only touches the screen you are
+    looking at, and deliberately so: while that overlay is on it repaints the
+    edit-mesh faces from the theme and the ghost's alpha does nothing, so a
+    file that still carries it in the Modeling or UV Editing workspace would
+    look like the ghost is broken as soon as you switch tabs. It is saved per
+    3D View inside the .blend (measured: survives save and reload) and older
+    versions of this add-on wrote it on, so old files all carry it. X-Ray is
+    NOT included here — that one was never ours, and someone may want it on
+    in a workspace that has nothing to do with this.
+    """
+    n = 0
+    for screen in bpy.data.screens:
+        for area in screen.areas:
+            if area.type != 'VIEW_3D':
+                continue
+            for space in area.spaces:
+                if space.type == 'VIEW_3D' and space.overlay.show_retopology:
+                    space.overlay.show_retopology = False
+                    n += 1
+    return n
+
+
+def remove_ghost(retopo) -> int:
+    """Take the ghost slot back off the retopo, leaving the material itself in
+    the file with its alpha. Returns how many slots went."""
+    me = getattr(retopo, "data", None)
+    if me is None or not hasattr(me, "materials"):
+        return 0
+    slots = [i for i, m in enumerate(me.materials) if _is_ghost(m)]
+    for i in reversed(slots):
+        me.materials.pop(index=i)
+    return len(slots)

@@ -127,11 +127,12 @@ Blender は Edit Mode でしか隠しを描画しないので、**Mirror が Obj
 2. **Residual → Bake** — Guide 表面と現在の Retopo のずれ（赤 = Guide が手前、青 = 奥、白 = 一致、暗い灰 = Retopo にまだ覆われていない）。画像 `AC9_ResidualMap_<Guide名>`。
 3. **Sag → Bake** — 型紙ごとの平面フィットからのずれ（白 = 手前に膨らむ、黒 = 奥に沈む、中間の灰 = 平面上）。画像 `AC9_SagMap_<Guide名>`。等高線が低周波のたわみに沿うエッジループの流れになります。
 4. **Drape → Bake** — Guide の 3D 形状から焼いた AO と Curvature を掛け合わせた 1 枚（`AC9_DrapeMap_<Guide名>`。AO / Curvature 単体は合成後に削除されます）。2D でナイフを入れるときの当たりに使います。AO の効くスケールは **Map Settings → AO Distance**（既定 30 mm）。真っ黒な型紙が出たらこの値が大きすぎる（密着した型紙同士が全遮蔽になる）。合成の比率は **AO Mix**（既定 0.7）。
-5. **Preview** で見たいマップを選び、**Plane** を押すと `AC9_BakePreview` という 1×1 m のプレーンが作られ、Solid シェーディングのビューポートが **Solid の色 = Texture** に切り替わります。あわせて **Retopology オーバーレイ**が ON になります。
+5. **Preview** で見たいマップを選び、**Plane** を押すと `AC9_BakePreview` という 1×1 m のプレーンが作られ、Solid シェーディングのビューポートが **Solid の色 = Texture** に切り替わります。あわせて X-Ray と **Retopology オーバーレイ**が OFF に戻ります。
+6. プレーンはリトポの 5 mm 下にあるので、そのままだとリトポに隠れます。**Add Transparent Material** を押すとリトポが半透明になり、切っている面越しにマップが読めます。濃さは **Alpha** スライダー（既定 0.35）。
 
 マップの画像は Guide ごとに分かれるので、複数の衣装を並行して進めても互いに上書きしません。ファイルが抱えているマップと容量は **Baked Maps** の一覧で確認・削除できます。
 
-**次へ**: マップが見えていること。見えないときは **Solid** の欄が **Texture** になっているか、**Retopology** オーバーレイが入っているかを確認してください（Preview Plane は Retopo の 5 mm 下にあります）。
+**次へ**: マップが見えていること。見えないときは **Solid** の欄が **Texture** になっているか、**Add Transparent Material** を押したかを確認してください（Preview Plane は Retopo の 5 mm 下にあります）。
 進捗はベイク中の段階表示のみで、Blender のベイク本体（`bpy.ops.object.bake`）は途中の割合を返さないため、その区間は止まって見えます。
 
 ![Guide Maps パネル（Residual / Sag / Drape の Bake と Preview の切り替え）。](../images/03_guide_maps_panel.png)

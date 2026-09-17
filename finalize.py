@@ -194,6 +194,16 @@ class AC9_OT_FinalizeRetopo(bpy.types.Operator):
             for key in [k for k in final.keys() if k.startswith("ac9_")]:
                 del final[key]
 
+            # Material slots ride along in data.copy() the same way attributes
+            # do, and the add-on puts working materials on the retopo itself
+            # (the Guide Maps ghost that makes it see-through, Island
+            # Colours). Every name the add-on persists carries the AC9_ prefix
+            # by convention, so that is the test. Without this a deliverable
+            # leaves with a half-transparent viewport material on it.
+            for i in reversed([i for i, m in enumerate(me.materials)
+                               if m is not None and m.name.startswith("AC9_")]):
+                me.materials.pop(index=i)
+
             # Smooth, like the mirror viewer and like the Guide it was
             # projected onto. The copy inherits the retopo's shading, and the
             # retopo is a working mesh nobody shades — measured 0 of 3,508

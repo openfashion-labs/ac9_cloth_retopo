@@ -130,11 +130,12 @@ Useful mid-work, when you want to see where things need fixing.
 2. **Residual → Bake** — the offset between the Guide's surface and the current Retopo (red = Guide is closer, blue = farther, white = matching, dark gray = not yet covered by the Retopo). Image `AC9_ResidualMap_<Guide name>`.
 3. **Sag → Bake** — the offset from each pattern piece's best-fit plane (white = bulging toward the viewer, black = sinking away, mid-gray = flat). Image `AC9_SagMap_<Guide name>`. The contour lines follow the edge-loop flow of low-frequency sagging.
 4. **Drape → Bake** — Ambient Occlusion times Curvature, baked off the Guide's 3D shape into `AC9_DrapeMap_<Guide name>` (the two passes are deleted once the product exists). Useful as a guide for where to knife-cut in 2D. The scale AO reads at is **Map Settings → AO Distance** (default 30 mm); solid black panels mean it is set too high, because panels sewn flat against each other then occlude one another completely. The composite ratio is **AO Mix** (default 0.7).
-5. Pick which map to view with **Preview**, then press **Plane** to create a 1×1 m plane called `AC9_BakePreview` and switch a Solid viewport to **Solid color = Texture**. The **Retopology overlay** is switched on at the same time.
+5. Pick which map to view with **Preview**, then press **Plane** to create a 1×1 m plane called `AC9_BakePreview` and switch a Solid viewport to **Solid color = Texture**. X-Ray and the **Retopology overlay** are switched back off at the same time.
+6. The plane sits 5 mm below the retopo, so the retopo hides it. **Add Transparent Material** makes the retopo semi-transparent so the map reads through the faces you are cutting; the **Alpha** slider sets how much (default 0.35).
 
 Map images are per Guide, so several garments in one file never overwrite each other's bakes. What the file is carrying, and what it costs, is listed in **Baked Maps** — with buttons to throw any of it away.
 
-**Next**: confirm the map is actually visible. If it isn't, check whether **Solid** is set to **Texture** and whether the **Retopology** overlay is on (the Preview Plane sits 5 mm below the Retopo).
+**Next**: confirm the map is actually visible. If it isn't, check whether **Solid** is set to **Texture** and whether you pressed **Add Transparent Material** (the Preview Plane sits 5 mm below the Retopo).
 Progress is shown only as staged text, since the bake itself (`bpy.ops.object.bake`) doesn't report incremental percentages — that stretch of the process will look stalled.
 
 ![The Guide Maps panel, with the Residual / Sag / Drape bake buttons and the Preview selector.](../images/03_guide_maps_panel.png)
