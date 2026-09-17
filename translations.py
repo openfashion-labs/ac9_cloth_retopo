@@ -422,6 +422,7 @@ _UI_STRINGS = {
     "Guide Result": "Guide 結果",
     "Ignore Under (mm)": "無視する長さ (mm)",
     "Include Solidify": "Solidify を含める",
+    "Keep Shading": "シェーディングを保持",
     "Kind": "種類",
     "Levels": "分割レベル",
     "Live Ghost Update": "Ghost をライブ更新",
@@ -901,6 +902,8 @@ _UI_STRINGS = {
         "検出した折れ（中心）線も Outline Snap のスナップ対象に含め、retopo 頂点の中央列がわ裁ち線にきれいに載るようにします。折れ線はアイランドの中心にあって輪郭から遠いので、外周頂点が型紙の縁から引き剥がされることはありません",
     "Interior quad size for the preview fill, in mm of fabric (converted into the flat layout the retopo lives in). 0 follows the boundary Spacing above, which is what makes the preview honest: the interior then shows the density the boundary is asking for":
         "プレビュー充填の内部クワッドのサイズ。単位は布の実寸 mm（retopo が住む平面レイアウトへ変換されます）。0 にすると上の境界 Spacing に従い、それがプレビューを正直にします——内部が境界の要求している密度をそのまま見せることになります",
+    "Keep the Guide's shading exactly as it is. Splitting the UV island boundaries cuts the smooth fans the custom split normals are stored against, so the same data decodes to a different normal and the drape picks up creases along every seam (measured: up to 48 degrees). This snapshots the corner normals and writes them back. It only acts when something was actually split, so a Guide that needs no split is not given custom normals it never had":
+        "Guide のシェーディングをそのまま保ちます。UV アイランドの境界で分割すると、custom split normals が基準にしているスムースファンが切れるため、同じデータが別の法線としてデコードされ、縫い目沿いに折り目が出ます（実測で最大 48 度）。これはコーナー法線を退避してから書き戻します。実際に分割が起きたときだけ働くので、分割の要らない Guide に、元々無かった custom normals が付くことはありません",
     "Live preview: draw the opposite-side ghost + connector ONLY for SELECTED BOUNDARY verts in Edit Mode. Interior verts have no seam partner so they're ignored; boundary verts farther than Max Seam Distance from any seam (free edges / hems) are skipped too. Shows ALL partners, so an N-way junction (folded hem / pocket / 3+ panels meeting) draws every counterpart, not just the nearest. Updates as you select/move":
         "ライブプレビュー: Edit Mode で「選択中の外周頂点」についてだけ、対岸の Ghost と接続線を描きます。内部頂点には Seam の相手がないので無視され、どの Seam からも Max Seam Distance より遠い外周頂点（フリー辺／裾）もスキップされます。「すべての」相手を表示するので、N 方向の合流点（折り返した裾／ポケット／3 枚以上の型紙が集まる箇所）では最近傍だけでなく全ての対応点を描きます。選択や移動に合わせて更新されます",
     "Mark the Guide's anchor points — where three or more panels meet, and where a sewn seam turns into a free edge. Anchors are what cut the boundary into spans, so this shows where one span ends and the next begins, which is the unit every density edit works in. Run 'Analyze Anchors' to fill it in":

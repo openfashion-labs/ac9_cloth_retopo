@@ -32,7 +32,7 @@ CLO 書き出しをベイク元として整える工程。既定で畳まれて�
 
 | ボタン | すること | 前提 | 結果 |
 |---|---|---|---|
-| **Create Flat SK** | Guide を UV アイランド境界で分割し、平面レイアウト `(u, v, 0)` をシェイプキー `<UV名>_Flattened` に書く。既定で三角化してから実行 | Guide 指定済み / Guide が Object Mode | シェイプキーが増え、値 1.0 で表示され、**Flat SK** 欄がその名前に更新される。UV レイヤの無い Guide は警告で拒否される。Basis は触られない |
+| **Create Flat SK** | Guide を UV アイランド境界で分割し、平面レイアウト `(u, v, 0)` をシェイプキー `<UV名>_Flattened` に書く。既定で三角化してから実行。分割するのは UV が実際に切れている辺だけで、UV の裏付けが無くなった seam フラグは残したまま温存する（結果行に本数が出る） | Guide 指定済み / Guide が Object Mode | シェイプキーが増え、値 1.0 で表示され、**Flat SK** 欄がその名前に更新される。UV レイヤの無い Guide は警告で拒否される。Basis は触られない。**Keep Shading**（Redo パネル・既定 ON）が分割前後でコーナー法線を保つので、縫い目沿いに折り目が出ない |
 | **Find Folds** | 二面角が **Crease Min Angle** 以上の辺を crease としてタグ付け。平面シェイプキーがある場合、表示中のキーに関係なく Basis 形状で測る | Guide 指定済み（どちらのモードでも可） | タグ数が結果行に出る。ライブの Solidify は見ない |
 | **Show** | crease タグの付いた辺を選択して見せる | Guide が Edit Mode | 選択が置き換わる |
 | **Mark** | 選択辺を手で crease にする（**Inset Line** が拾う） | Guide が Edit Mode / 辺を選択 | タグが増える |

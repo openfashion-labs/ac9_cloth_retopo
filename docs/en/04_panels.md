@@ -32,7 +32,7 @@ Every button works on the **Guide** (Setup's picker) and on the mode the **Guide
 
 | Button | What it does | Prerequisite | Result |
 |---|---|---|---|
-| **Create Flat SK** | splits the Guide at UV island boundaries and writes the flat layout `(u, v, 0)` to a shape key `<UV name>_Flattened`. Triangulates by default before running | Guide set / Guide in Object Mode | the shape key appears, shown at value 1.0, and the **Flat SK** field is updated with its name. A Guide with no UV layer is refused with a warning. Basis is untouched |
+| **Create Flat SK** | splits the Guide at UV island boundaries and writes the flat layout `(u, v, 0)` to a shape key `<UV name>_Flattened`. Triangulates by default before running. Only edges where the UV really breaks are split; a seam flag the UV no longer backs up is left whole (the result line counts them) | Guide set / Guide in Object Mode | the shape key appears, shown at value 1.0, and the **Flat SK** field is updated with its name. A Guide with no UV layer is refused with a warning. Basis is untouched. **Keep Shading** (Redo panel, on by default) carries the corner normals across the split, so no creases appear along the seams |
 | **Find Folds** | tags edges as crease where the dihedral angle is at least **Crease Min Angle**. If a flat shape key exists, measures against the Basis shape regardless of which key is currently displayed | Guide set (either mode) | the tag count appears in the result line. Doesn't look at a live Solidify |
 | **Show** | selects the edges tagged as crease so you can see them | Guide in Edit Mode | replaces the selection |
 | **Mark** | manually tags selected edges as crease (picked up by **Inset Line**) | Guide in Edit Mode / edges selected | adds tags |
