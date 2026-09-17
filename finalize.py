@@ -194,6 +194,13 @@ class AC9_OT_FinalizeRetopo(bpy.types.Operator):
             for key in [k for k in final.keys() if k.startswith("ac9_")]:
                 del final[key]
 
+            # The projector records the Guide's triangle count on the retopo's
+            # MESH datablock (ac9_guide_ntris), and data.copy() carries
+            # mesh-level custom properties over exactly like the attribute
+            # layers above — the object-level loop never sees them.
+            for key in [k for k in me.keys() if k.startswith("ac9_")]:
+                del me[key]
+
             # Material slots ride along in data.copy() the same way attributes
             # do, and the add-on puts working materials on the retopo itself
             # (the Guide Maps ghost that makes it see-through, Island
