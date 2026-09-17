@@ -156,7 +156,7 @@ class AC9_OT_CloInset(bpy.types.Operator):
     bl_idname = "ac9_cloth.clo_inset"
     bl_label = "Inset Pieces"
     bl_description = (
-        "Step 2. Run before Inset Line. For every pattern piece: offset the "
+        "Step 3. Run before Inset Line. For every pattern piece: offset the "
         "outline inward by Width on the flat shape key and rebuild the ring "
         "between the two as triangles, so a vertex row runs parallel to the "
         "outline, seams and free edges alike. Nothing is welded, so every "
@@ -254,7 +254,7 @@ class AC9_OT_CloInsetLine(bpy.types.Operator):
     bl_idname = "ac9_cloth.clo_inset_line"
     bl_label = "Inset Line"
     bl_description = (
-        "Step 3. Run after Inset Pieces. Inset a fold line to both sides: a "
+        "Step 4. Run after Inset Pieces. Inset a fold line to both sides: a "
         "band Width wide on each side of the line is rebuilt as triangles, "
         "with the fold's own vertices and edges left exactly where they are. "
         "Uses the SELECTED EDGES (each connected run is one line); with "
@@ -381,7 +381,7 @@ class AC9_OT_CloTagByAngle(bpy.types.Operator):
     bl_idname = "ac9_cloth.clo_tag_by_angle"
     bl_label = "Find Folds"
     bl_description = (
-        "Step 1. Tag every edge whose two faces meet at Crease Min Angle or "
+        "Step 2. Tag every edge whose two faces meet at Crease Min Angle or "
         "more as a crease (fold lines and, on a mesh that already has "
         "thickness, its rim edges at 90 degrees). With a planar shape key, "
         "measured on the Basis shape regardless of which key is displayed. A "
