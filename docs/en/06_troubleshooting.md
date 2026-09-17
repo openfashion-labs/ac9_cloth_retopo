@@ -103,7 +103,7 @@ Note that bake progress is only shown as staged text. The bake itself doesn't re
 
 **Symptom**: a fold that is clearly a ridge reads the same grey as its surroundings in the Curvature / Drape map. Only concave folds show.
 
-**There were two causes, both fixed in 1.0.0.**
+**There were two causes, both fixed in 1.1.0.**
 
 1. **The Guide carried a Solidify modifier.** A Guide out of CLO often has one for thickness, and when it is **off in the viewport but on in the render**, only the bake sees it — and it sees the **inner** face of that thickness, whose UVs sit exactly on top of the outer one. Measured: 91.2% of covered texels came off the inner shell, the Curvature pass was a bit-exact mirror about 0.5 (**ridges black, folds white**) and the AO pass was anti-correlated with the real one. Shell modifiers are now suspended for the duration of the bake.
 2. **Curvature was Geometry Pointiness.** Pointiness only looks at a vertex's immediate neighbours, so a broad ridge sinks below the triangulation's own scatter (measured: 0.0127 mm of signal along the normal against 0.245 mm of scatter across it). Curvature now measures relief at the scale set by **Curvature Radius**, and a ridge comes out as a white band.

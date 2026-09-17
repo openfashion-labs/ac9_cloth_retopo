@@ -5,7 +5,7 @@
 | Item | Value |
 |---|---|
 | Blender | 5.0.0 or later (`blender_version_min` in `blender_manifest.toml`) |
-| Version | 1.0.0 |
+| Version | 1.1.0 |
 | License | GPL-3.0-or-later |
 | Extra libraries | None to install by hand — shapely ships bundled with the add-on (see "About shapely" below) |
 

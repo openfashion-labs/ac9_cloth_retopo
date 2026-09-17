@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "ac9_cloth_retopo"
-version = "1.0.0"
+version = "1.1.0"
 name = "AC9 Cloth Retopo"
 tagline = "UV Seam Guide + CLO Retopo Projector for garment retopology"
 maintainer = "AC9 <cg-tech@omnisinc.co>"

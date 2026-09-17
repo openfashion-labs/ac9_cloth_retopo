@@ -5,7 +5,7 @@
 | 項目 | 値 |
 |---|---|
 | Blender | 5.0.0 以上（`blender_manifest.toml` の `blender_version_min`） |
-| バージョン | 1.0.0 |
+| バージョン | 1.1.0 |
 | ライセンス | GPL-3.0-or-later |
 | 追加ライブラリ | 手動インストール不要 — shapely はアドオンに同梱されています（下の「shapely について」参照） |
 
