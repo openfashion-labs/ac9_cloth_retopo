@@ -274,9 +274,10 @@ def _apply_to_triangles(attachments, fallback_positions, triangles):
     n_tri = len(triangles)
     for att, fallback in zip(attachments, fallback_positions):
         # A stored triangle index can outlive the Guide it was computed
-        # against (2026-09-16: Retopo_Skirt carried tri_idx 402770 while the
-        # re-prepared Guide had 396744 triangles -> IndexError on Apply
-        # Subdivide). Treat it like a failed attachment instead of raising;
+        # against (measured on a skirt: the retopo carried tri_idx 402770
+        # while the re-prepared Guide had 396744 triangles -> IndexError on
+        # Apply Subdivide). Treat it like a failed attachment instead of
+        # raising;
         # the projection paths re-bind such verts via guide_stamp_matches.
         if not att.is_ok or not (0 <= att.triangle_index < n_tri):
             out.append(fallback.copy())

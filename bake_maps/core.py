@@ -252,8 +252,9 @@ def compute_sag(
 # reference and vanish; below it, they are reported at full height.
 #
 # Measured on the same Guide, over the ridge the report was made about
-# (Retopo_Jacket verts 4374..4380, ridge centre against its flanks 8-20 mm
-# out, in final 0..1 map values, with the Solidify bug below already fixed):
+# (a jacket panel, verts 4374..4380 of the retopo under test, ridge centre
+# against its flanks 8-20 mm out, in final 0..1 map values, with the Solidify
+# bug below already fixed):
 #
 #                                    ridge contrast   grain   contrast/grain
 #   Pointiness, ramp 0.35-0.65            0.057       0.0130       4.4
@@ -650,10 +651,10 @@ def _build_emit_shader(nt, out_node, attr_name, shader, ao_distance_m):
 # The Curvature pass was then a bit-exact mirror about 0.5 — ridges dark,
 # folds bright, median |with - (1 - without)| = 0.0002 — so a convex fold line
 # read as a dark line and looked "missing"; on the ridge measured for this
-# (Retopo_Jacket verts 4374..4380) core fell to 0.443 against a 0.500 flank,
-# where the real surface gives 0.559. The AO pass came out anti-correlated
-# with the real one (r = -0.17, mean 0.439 against 0.684) because its
-# hemisphere pointed into the inside of the garment.
+# (the same jacket panel, verts 4374..4380) core fell to 0.443 against a
+# 0.500 flank, where the real surface gives 0.559. The AO pass came out
+# anti-correlated with the real one (r = -0.17, mean 0.439 against 0.684)
+# because its hemisphere pointed into the inside of the garment.
 # Suspending them for the duration of the bake is what makes every pass read
 # the side of the cloth the user is looking at.
 SHELL_MODIFIER_TYPES = {'SOLIDIFY'}
