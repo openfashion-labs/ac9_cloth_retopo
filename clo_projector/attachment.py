@@ -271,8 +271,15 @@ def apply_attachments_to_2d(
 
 def _apply_to_triangles(attachments, fallback_positions, triangles):
     out: List[Vector] = []
+    n_tri = len(triangles)
     for att, fallback in zip(attachments, fallback_positions):
-        if not att.is_ok:
+        # A stored triangle index can outlive the Guide it was computed
+        # against (measured on a skirt: the retopo carried tri_idx 402770
+        # while the re-prepared Guide had 396744 triangles -> IndexError on
+        # Apply Subdivide). Treat it like a failed attachment instead of
+        # raising;
+        # the projection paths re-bind such verts via guide_stamp_matches.
+        if not att.is_ok or not (0 <= att.triangle_index < n_tri):
             out.append(fallback.copy())
             continue
         a, b, c = triangles[att.triangle_index]
@@ -1384,6 +1391,31 @@ def save_attachments_to_mesh(mesh, attachments: Sequence[Attachment]) -> None:
     u_attr.data.foreach_set("value", u_values)
     v_attr.data.foreach_set("value", v_values)
     status_attr.data.foreach_set("value", status_values)
+
+
+# Guide fingerprint stored next to the attachments. `triangle_index` only
+# means something for the Guide triangulation it was computed against; when
+# the Guide is re-prepared (Guide Separate, Inset, a swapped Guide...) the
+# triangle count changes and every stored index is stale — the in-range ones
+# silently point at the wrong triangle, the out-of-range ones raise. The
+# Edit-Mode Refresh never rewrites the retopo's attachments (it must not touch
+# the mesh while it is in Edit Mode), so stale attachments can survive many
+# successful Refreshes before an incremental path trusts them.
+PROP_GUIDE_NTRIS = "ac9_guide_ntris"
+
+
+def stamp_guide_on_mesh(mesh, n_triangles: int) -> None:
+    """Record how many Guide triangles the stored attachments index into."""
+    mesh[PROP_GUIDE_NTRIS] = int(n_triangles)
+
+
+def guide_stamp_matches(mesh, n_triangles: int) -> bool:
+    """True only if the mesh carries a stamp equal to *n_triangles*. A missing
+    stamp (attachments written before the stamp existed) counts as a mismatch,
+    so the caller does one full recompute and stamps the result.
+    """
+    stamp = mesh.get(PROP_GUIDE_NTRIS)
+    return stamp is not None and int(stamp) == int(n_triangles)
 
 
 def load_attachments_from_mesh(mesh) -> List[Attachment]:

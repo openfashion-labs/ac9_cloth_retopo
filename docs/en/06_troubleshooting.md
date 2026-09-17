@@ -87,14 +87,28 @@ Number of Vertices 4 and the type set to **Greater Than**.
 
 1. In **Guide Maps → Preview**, pick the map you want, then press **Plane**. This creates the `AC9_BakePreview` plane and switches a Solid viewport to **Solid color = Texture**.
 2. Still nothing? Check whether the **Solid** field in the **Guide Maps** panel is set to **Texture** (the same property as Viewport Shading > Color).
-3. **Hide anything lying flat at z = 0, by hand.** The plane sits 5 mm below z = 0, so the Guide in its Flat SK pose, the flat retopo or a hand-made bake board at z = 0 all come in front of it when you look down from above and hide the map completely — the giveaway is seeing the panel shapes filled solid white. The **Plane** button deliberately does not touch other objects' visibility.
-4. The **Retopology** overlay (Overlays > Mesh Edit Mode > Retopology) lifts the mesh being edited clear of what is behind it to stop z-fighting; it does not make the plane below visible. X-Ray is not used.
-5. **Plane** doesn't touch Rendered shading viewports (they already show it, since it's an Emission material).
-6. Right after reopening the file, **AO**, **Curvature** and **Drape** are empty: those three are not packed into the .blend, so press **Drape → Bake** again (it takes seconds).
+3. **To see through the retopo, press **Add Transparent Material**.** The plane sits 5 mm below z = 0, so the flat retopo at z = 0 comes in front of it when you look down from above and hides the map completely — the giveaway is seeing the panel shapes filled solid white. That button makes the retopo semi-transparent, and the **Alpha** slider sets how much.
+4. **Hide anything else lying flat at z = 0, by hand** (the Guide in its Flat SK pose, a hand-made bake board). The **Plane** button deliberately does not touch other objects' visibility.
+5. Check that the **Retopology** overlay (Overlays > Mesh Edit Mode > Retopology) is **off**. While it is on, the edit-mesh faces are repainted in the theme's colour (measured alpha 0.502), which **overrides the ghost's transparency**. Pressing **Plane** switches it back off for you. X-Ray is not used either.
+6. **Plane** doesn't touch Rendered shading viewports (they already show it, since it's an Emission material).
+7. Right after reopening the file, **AO** and **Curvature** are empty unless **Keep Passes** was enabled; these temporary passes are not packed. The combined **Drape** map is kept when **Keep in file** is enabled (the default). Re-bake only when you need the passes again or changed the settings.
 
-<!-- screenshot: Viewport Shading with Color = Texture and the Retopology overlay on -->
+**If Add Transparent Material stops with "already carries ..."**: the retopo has another material on it. Which slot is which is your business, so this tool stops rather than rearranging them. Remove that material and press again, or work without the ghost.
+
+<!-- screenshot: Viewport Shading with Color = Texture, and the Drape map read through a semi-transparent retopo -->
 
 Note that bake progress is only shown as staged text. The bake itself doesn't report incremental percentages, so that stretch appears stalled (**Drape** bakes twice internally).
+
+## Ridges (convex folds) don't show in the Drape map
+
+**Symptom**: a fold that is clearly a ridge reads the same grey as its surroundings in the Curvature / Drape map. Only concave folds show.
+
+**There were two causes, both fixed in 1.1.0.**
+
+1. **The Guide carried a Solidify modifier.** A Guide out of CLO often has one for thickness, and when it is **off in the viewport but on in the render**, only the bake sees it — and it sees the **inner** face of that thickness, whose UVs sit exactly on top of the outer one. Measured: 91.2% of covered texels came off the inner shell, the Curvature pass was a bit-exact mirror about 0.5 (**ridges black, folds white**) and the AO pass was anti-correlated with the real one. Shell modifiers are now suspended for the duration of the bake.
+2. **Curvature was Geometry Pointiness.** Pointiness only looks at a vertex's immediate neighbours, so a broad ridge sinks below the triangulation's own scatter (measured: 0.0127 mm of signal along the normal against 0.245 mm of scatter across it). Curvature now measures relief at the scale set by **Curvature Radius**, and a ridge comes out as a white band.
+
+**Still not showing**: match **Curvature Radius** (Guide Maps) to the width of the ridge. Anything much wider than the radius is smoothed away together with the reference. For a ridge too broad for the 8 mm default, try 12–20 mm; for fine creases, 3–5 mm.
 
 ## Baking normals / AO externally picks up the pattern of a different surface
 
@@ -136,6 +150,22 @@ Without a limit, a ray that grazes past its own surface carries on across the ga
 
 **In short**: extrusion around half the gap (2 mm for a 4 mm gap), ray length two or three times that. The fields are in metres, so type `0.002` and `0.006`.
 
+## Selection Link markers don't appear
+
+**Symptom**: with both the Retopo and the Mirror in Edit Mode, selecting vertices shows no orange markers on the other object — or only sometimes.
+
+**Cause**: two things. (1) Markers follow the **active object's** selection only (the one selected last): Mirror active gives Mirror → 2D only, Retopo active gives 2D → Mirror only. (2) The 2D → Mirror direction uses the Guide projection cache, which is **empty right after opening a file**. One **Refresh** (or any projection) fills it; editing or swapping the Guide empties it again. The Mirror → 2D direction only reads the 2D positions recorded at Refresh time, so it always shows.
+
+**Fix**: make the object you want to select on the active one (Ctrl+click it last). If 2D → Mirror shows nothing, press **3D View → Mirror → Refresh** once.
+
+## Hidden geometry (H) doesn't hide on the Mirror
+
+**Symptom**: pressing **H** in the Retopo's Edit Mode leaves the Mirror fully drawn.
+
+**Cause**: Blender only draws geometry as hidden in Edit Mode; a Mirror in Object Mode carries the flags but looks unchanged. Also, **while Subdiv Preview is on the sync itself is skipped** (the subdivided Mirror has no vertex correspondence with the Retopo).
+
+**Fix**: select both the Retopo and the Mirror and press **Tab** (both in Edit Mode). Turn Subdiv Preview off, or apply **Subdivide** to the Retopo first. The sync is one way, Retopo → Mirror; hiding on the Mirror does not travel back.
+
 ## The Mirror looks stale
 
 **Symptom**: after editing in 2D, the Mirror's 3D shape still looks like the old one.
@@ -174,7 +204,7 @@ What gets removed:
 - Scene settings (Retopo / Guide / Flat SK and every option — once this is gone, the viewport header buttons disappear too)
 - The Mirror object
 - The Bake Preview Plane (the `AC9_BakePreview` object, mesh, and material)
-- Every `ac9_*` / `AC9_*` attribute layer on every mesh, the `AC9_3D_Project` and `AC9_Separated` shape keys, the `AC9_Project_Failed` vertex group, the `AC9_Island_Colors` material slot
+- Every `ac9_*` / `AC9_*` attribute layer on every mesh, the `AC9_3D_Project` and `AC9_Separated` shape keys, the `AC9_Project_Failed` vertex group, the `AC9_Island_Colors` and `AC9_RetopoTransparent` (formerly `AC9_RetopoGhost`) material slots
 - `ac9_*` custom properties on the scene, objects, and meshes
 - Bake images, temporary bake materials, and report text data blocks
 

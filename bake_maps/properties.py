@@ -46,6 +46,21 @@ def _keep_passes_update(self, context):
         self.preview_map = 'DRAPE'   # its own update re-syncs the plane
 
 
+# The transparency is NOT stored here: it lives on the transparent material
+# so it comes back with the .blend, and so that the two places that can show
+# it (this slider and Material Properties > Viewport Display > Color) can
+# never disagree. This proxy reads the material on every draw and writes both
+# knobs Blender needs — see preview.set_ghost_alpha.
+def _get_ghost_alpha(self):
+    top = getattr(self.id_data, "ac9_cloth_retopo", None)
+    return _preview.get_ghost_alpha(getattr(top, "retopo_obj", None))
+
+
+def _set_ghost_alpha(self, value):
+    top = getattr(self.id_data, "ac9_cloth_retopo", None)
+    _preview.set_ghost_alpha(value, getattr(top, "retopo_obj", None))
+
+
 _KEEP_DESC = (
     "Pack this map's pixels into the .blend so it is still there after "
     "reopening the file. The pack is a 16-bit PNG, not the raw float buffer, "
@@ -129,6 +144,23 @@ class AC9BakeMapsProps(PropertyGroup):
         precision=0,
     )
 
+    curv_radius_mm: FloatProperty(
+        name="Curvature Radius",
+        description=(
+            "The scale of detail (mm) the drape Curvature reports. The Guide "
+            "is smoothed with a kernel this wide and the map shows how far "
+            "the surface sits above that smoothed copy along its normal: "
+            "white is convex (a ridge), black concave (a fold), mid grey "
+            "flat. Features much wider than the radius are smoothed away "
+            "with the reference and disappear; set it near the width of the "
+            "ridges you cut along. Cost rises with the square of the radius"
+        ),
+        default=8.0,
+        min=0.2,
+        soft_max=30.0,
+        precision=1,
+    )
+
     drape_ao_mix: FloatProperty(
         name="AO Mix",
         description=(
@@ -165,6 +197,26 @@ class AC9BakeMapsProps(PropertyGroup):
         ),
         default=False,
         update=_keep_passes_update,
+    )
+
+    ghost_alpha: FloatProperty(
+        name="Alpha",
+        description=(
+            "How see-through the Retopo Mesh's working material makes it, so "
+            "the Preview Plane 5 mm underneath reads through the faces you "
+            "are cutting. 0 = invisible, 1 = solid. The value is kept on the "
+            "AC9_RetopoTransparent material itself, so it is saved in the "
+            ".blend "
+            "and nothing in Preferences is touched — unlike the Retopology "
+            "overlay, whose transparency is a theme colour shared by every "
+            "file. Solid and Material Preview read different properties for "
+            "this (measured), and this slider writes both"
+        ),
+        default=_preview.GHOST_DEFAULT_ALPHA,
+        min=0.0,
+        max=1.0,
+        get=_get_ghost_alpha,
+        set=_set_ghost_alpha,
     )
 
     # No `default` — Blender does not accept one alongside a dynamic items

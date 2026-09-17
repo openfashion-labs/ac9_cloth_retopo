@@ -117,7 +117,9 @@ _batches = {
     "pair":           None,
     "cross_unplaced": None,   # ghost whose partner vert is NOT yet placed
     "cross_placed":   None,   # ghost whose partner vert already exists nearby
+    "orphan_rings":   None,   # rings on the SOURCE vert of every unplaced sewn ghost
     "conn":           None,
+    "conn_unplaced":  None,   # connectors for unplaced ghosts only
     "snap_ring":  None,   # active-snap feedback (modal only)
     "snap_rings": None,   # permanent snap-radius circles around all ghosts
     "symmetry":   None,   # fold (centre) lines of self-symmetric islands
@@ -638,7 +640,9 @@ def clear_ghost_batches():
     _cache["ghost_dirty"] = False
     _batches["cross_unplaced"] = None
     _batches["cross_placed"] = None
+    _batches["orphan_rings"] = None
     _batches["conn"] = None
+    _batches["conn_unplaced"] = None
     _batches["snap_rings"] = None
 
 
@@ -713,15 +717,34 @@ def reset_retopo_derived(scene=None, counters=True):
             pass
 
 
-def build_ghost_batches(results, z_offset, cross_size):
+def build_ghost_batches(results, z_offset, cross_size, ring_segments=16):
     # Split crosses by whether the partner vert is already placed (r["matched"]).
     # Unplaced ghosts are the actionable ones — the spots you still need to fill;
     # placed ghosts sit on an existing vert and are mostly confirmation.
+    #
+    # A ghost cross marks the PARTNER side — where a vertex is missing — not the
+    # vertex that owns the ghost. In the split flat layout those are a whole
+    # panel apart: measured 0.802 flat units between an unpaired boundary vertex
+    # and its own cross on a production trouser panel, against a 0.005 cross
+    # size. At working zoom the warning is off screen and the orphan vertex on
+    # screen carries no mark at all, which reads as "no warning at all" — that
+    # is what prompted this. `orphan_coords` rings the orphan, so the vertex you
+    # are looking at tells you its counterpart slot is empty. Sewn only: a free
+    # edge's foot is on the vertex's own outline, close enough that a ring there
+    # would just smear into the cross.
+    #
+    # Same reason the connectors are split: on that panel 320 ghosts produced 2
+    # unplaced, so a connector per ghost buried the 2 that mattered under 318
+    # that said nothing. Ghost Lines has been OFF by default ever since.
     unplaced_coords = []
     placed_coords = []
+    orphan_coords = []
     conn_coords = []
+    conn_unplaced_coords = []
     z_cross = z_offset + 0.02
+    z_ring  = z_offset + 0.0205
     z_conn  = z_offset + 0.018
+    ring_r = max(cross_size, 0.001) * 1.6
 
     for r in results:
         opp = _flat_to_3d(r["opposite_pt"], z_cross)
@@ -730,10 +753,24 @@ def build_ghost_batches(results, z_offset, cross_size):
             opp + Vector((-s, 0, 0)), opp + Vector((s, 0, 0)),
             opp + Vector((0, -s, 0)), opp + Vector((0, s, 0)),
         ]
-        (placed_coords if r.get("matched") else unplaced_coords).extend(arms)
+        matched = bool(r.get("matched"))
+        (placed_coords if matched else unplaced_coords).extend(arms)
         src = Vector((r["source_pt"].x, r["source_pt"].y, z_conn))
         dst = Vector((r["opposite_pt"].x, r["opposite_pt"].y, z_conn))
         conn_coords += [src, dst]
+        if not matched:
+            conn_unplaced_coords += [src, dst]
+            if r.get("side") != "free":
+                cx, cy = r["source_pt"].x, r["source_pt"].y
+                for i in range(ring_segments):
+                    a1 = 2.0 * math.pi * i / ring_segments
+                    a2 = 2.0 * math.pi * (i + 1) / ring_segments
+                    orphan_coords += [
+                        Vector((cx + math.cos(a1) * ring_r,
+                                cy + math.sin(a1) * ring_r, z_ring)),
+                        Vector((cx + math.cos(a2) * ring_r,
+                                cy + math.sin(a2) * ring_r, z_ring)),
+                    ]
 
     try:
         shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
@@ -743,7 +780,9 @@ def build_ghost_batches(results, z_offset, cross_size):
         # free-edge foot classification gets tested — and nothing draws there.
         _batches["cross_unplaced"] = None
         _batches["cross_placed"] = None
+        _batches["orphan_rings"] = None
         _batches["conn"] = None
+        _batches["conn_unplaced"] = None
         return
     _batches["cross_unplaced"] = (
         batch_for_shader(shader, 'LINES', {"pos": unplaced_coords})
@@ -753,9 +792,17 @@ def build_ghost_batches(results, z_offset, cross_size):
         batch_for_shader(shader, 'LINES', {"pos": placed_coords})
         if placed_coords else None
     )
+    _batches["orphan_rings"] = (
+        batch_for_shader(shader, 'LINES', {"pos": orphan_coords})
+        if orphan_coords else None
+    )
     _batches["conn"] = (
         batch_for_shader(shader, 'LINES', {"pos": conn_coords})
         if conn_coords else None
+    )
+    _batches["conn_unplaced"] = (
+        batch_for_shader(shader, 'LINES', {"pos": conn_unplaced_coords})
+        if conn_unplaced_coords else None
     )
 
 
@@ -1628,10 +1675,18 @@ def _draw_callback_3d():
             _draw_single(_batches["cross_placed"], cp, props.ghost_line_width, vp)
         cu = COLOR_PRESETS.get(props.ghost_color_unplaced, COLOR_PRESETS["RED"])
         _draw_single(_batches["cross_unplaced"], cu, props.ghost_line_width, vp)
+        # The orphan end of the same warning. Same colour as the cross so the
+        # two read as one pair; different shape (ring vs cross) so it is still
+        # obvious which end is the vertex and which is the empty slot.
+        if getattr(props, "show_orphan_rings", False):
+            _draw_single(_batches["orphan_rings"], cu,
+                         max(1.0, props.ghost_line_width), vp)
 
     if props.show_ghost_lines:
         c = COLOR_PRESETS.get(props.ghost_line_color, COLOR_PRESETS["MAGENTA"])
-        _draw_single(_batches["conn"], c, max(1.0, props.ghost_line_width * 0.7), vp)
+        key = ("conn_unplaced"
+               if getattr(props, "ghost_lines_unplaced_only", False) else "conn")
+        _draw_single(_batches[key], c, max(1.0, props.ghost_line_width * 0.7), vp)
 
     # Permanent snap-radius circles (one per ghost, always visible when toggled)
     if props.show_snap_radius and _batches["snap_rings"] is not None:

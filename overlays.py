@@ -47,6 +47,7 @@ _PRESETS = {
             "show_seam_parity":   True,
             "show_ghost_points":  True,
             "show_only_unplaced": True,
+            "show_orphan_rings":  True,
             # Generate places vertices ON the fold axis and rebuilds one twin
             # from the other, so both are wanted while the boundary is being
             # built, not only while reading the structure (2026-09-09).
@@ -71,6 +72,7 @@ _PRESETS = {
             "show_mirror_pairs":  True,
             "show_ghost_points":  True,
             "show_only_unplaced": True,
+            "show_orphan_rings":  True,
         },
         "proj": {
             "show_seam_lines": True,
@@ -91,6 +93,7 @@ _PRESETS = {
             "show_seam_parity":   True,
             "show_ghost_points":  True,
             "show_only_unplaced": True,
+            "show_orphan_rings":  True,
             "show_anchors":       True,
         },
         "proj": {
@@ -123,6 +126,12 @@ _SEAM_TOGGLES = (
     "show_ghost_points",
     "show_ghost_lines",
     "show_only_unplaced",
+    "show_orphan_rings",
+    # ghost_lines_unplaced_only is deliberately NOT here. This list is what the
+    # presets stomp, and everything in it draws something on its own. That flag
+    # only picks WHICH batch the Ghost Lines layer draws, so stomping it to
+    # False would mean "All Off" silently re-arms all 320 connectors the next
+    # time Lines is switched back on.
     "show_selected_ghost",
     "show_seam_parity",
     "show_seam_status",
@@ -282,7 +291,16 @@ def draw_overlay_body(layout, context):
     sub = col.row()
     sub.enabled = seam.show_ghost_points
     sub.prop(seam, "show_only_unplaced", text="Only Unplaced")
+    # The cross marks the partner side; the ring marks the vertex that owns it.
+    # Both are the same warning seen from opposite ends, so the ring lives here
+    # under Points rather than as a layer of its own.
+    sub = col.row()
+    sub.enabled = seam.show_ghost_points
+    sub.prop(seam, "show_orphan_rings", text="Orphan Rings")
     col.prop(seam, "show_ghost_lines", text="Lines")
+    sub = col.row()
+    sub.enabled = seam.show_ghost_lines
+    sub.prop(seam, "ghost_lines_unplaced_only", text="Unplaced Lines Only")
     col.prop(seam, "show_snap_radius", text="Snap Radius")
 
     box = body.box()

@@ -76,11 +76,25 @@ def _on_depsgraph_update(scene, depsgraph):
     if retopo is None or retopo.type != "MESH":
         return
 
+    # Guide Edit Mode changes the projection surface and/or its flat source.
+    # As with Retopo edits, a depsgraph tick may be selection-only; marking a
+    # preview stale too often is preferable to silently displaying old data.
+    guide_obj = top.guide_obj
+    if (guide_obj is not None and guide_obj.type == "MESH"
+            and guide_obj.mode == "EDIT"):
+        from . import mirror as mirror_mod
+        mirror_mod.mark_preview_dirty(retopo)
+
     # Hiding geometry is an Edit-Mode-only act, and Blender only DRAWS geometry
     # as hidden in Edit Mode, so that is the whole window where a live sync
     # means anything. Scheduling is two attribute reads; the scan happens in
     # the timer, where a burst of updates has already collapsed into one pass.
     if retopo.mode == "EDIT" and not _hide_syncing:
+        # Any Edit-mesh depsgraph tick may be a coordinate/topology change.
+        # Over-detecting selection-only updates is safe; a stale preview is
+        # never silently presented as current.
+        from . import mirror as mirror_mod
+        mirror_mod.mark_preview_dirty(retopo)
         _schedule_hide_sync()
 
     mode = retopo.mode

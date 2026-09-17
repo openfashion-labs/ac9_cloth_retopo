@@ -224,6 +224,182 @@ def compute_sag(
 
 
 # ---------------------------------------------------------------------------
+# Curvature map
+# ---------------------------------------------------------------------------
+#
+# What the Guide's ridges look like to a curvature measure, and why this is
+# not Blender's Geometry Pointiness.
+#
+# Pointiness is a ONE-RING measure: Cycles takes the mean of the vectors to a
+# vertex's immediate neighbours and reports the angle between that mean and
+# the vertex normal. The curvature it is after lives in the tiny component of
+# that mean along the normal; everything perpendicular to the normal is
+# triangulation noise, and the normalisation inside the measure lets that
+# noise through at full strength. Measured on the production jacket Guide
+# (172k verts, mean edge 1.67 mm): the normal component has median 0.0127 mm
+# against a median tangential residual of 0.245 mm - a signal-to-noise ratio
+# of 0.057. A fold sharp enough to bend the surface within one edge length
+# survives that; a broad ridge - the thing a panel boundary is cut along -
+# does not, which is exactly the "the ridge is not in the map" report this
+# replaced.
+#
+# What is baked instead is the surface's own high-pass: smooth a copy of the
+# Guide's 3D shape, and report how far each vertex sits ABOVE that smoothed
+# copy along its normal. Convex is positive (white), concave negative
+# (black), flat is mid grey - the same reading direction Pointiness had. The
+# smoothing radius is the scale of detail reported, in millimetres, and it is
+# the only knob: above it, features are smoothed away together with the
+# reference and vanish; below it, they are reported at full height.
+#
+# Measured on the same Guide, over the ridge the report was made about
+# (a jacket panel, verts 4374..4380 of the retopo under test, ridge centre
+# against its flanks 8-20 mm out, in final 0..1 map values, with the Solidify
+# bug below already fixed):
+#
+#                                    ridge contrast   grain   contrast/grain
+#   Pointiness, ramp 0.35-0.65            0.057       0.0130       4.4
+#   Pointiness, ramp 0.43-0.53            0.171       0.0235       7.3
+#   this, radius 2 mm                     0.279       0.0224      12.5
+#   this, radius 3 mm                     0.308       0.0188      16.4
+#   this, radius 5 mm                     0.350       0.0159      22.0
+#   this, radius 8 mm  (the default)      0.357       0.0156      22.8
+#   this, radius 12 mm                    0.342       0.0160      21.3
+#   this, radius 20 mm                    0.309       0.0173      17.9
+#
+# ("grain" is the per-texel high-frequency noise: the std of the map minus
+# its own 5 px box blur, over a flat region of the layout.) The table is
+# flat between 5 and 12 mm; the default is the middle of that plateau, which
+# is also where the layout reads best by eye — at 5 mm the flat areas still
+# carry the weave's own micro-relief, and by 12 mm neighbouring folds start
+# merging into one another. Cost at 172k verts, radius 8 mm: 0.98 s to
+# compute the attribute against 2.7 s for the 2K bake it feeds, growing with
+# the square of the radius (5.4 s at 20 mm).
+#
+# The black/white window is fitted per bake to the 98th percentile of the
+# absolute displacement rather than fixed, because the useful range moves
+# with the radius (it is roughly the fold height at that scale) and a fixed
+# window at the wrong radius is what washes the map to flat grey. The fitted
+# window is reported in millimetres so two bakes can still be compared
+# knowingly.
+
+CURVATURE_ATTR = "AC9_Curvature"
+
+# Fraction of the absolute displacement that lands inside the black-to-white
+# window.
+CURVATURE_WINDOW_PCT = 98.0
+# Windows below this are noise, not drape: a Guide that really is flat would
+# otherwise have its own triangulation amplified to full contrast.
+CURVATURE_WINDOW_FLOOR_M = 2.0e-5
+# Smoothing cost is linear in the iteration count and the radius is squared
+# on the way in, so a mm typo would otherwise cost minutes.
+CURVATURE_MAX_ITERS = 600
+
+
+def _vertex_normals_np(mesh, co: np.ndarray) -> np.ndarray:
+    """Area-weighted vertex normals for the positions in *co*.
+
+    Computed here rather than read off mesh.vertices[].normal because *co* is
+    a ShapeKey's positions (the Guide's 3D shape) and the mesh's own normals
+    belong to whatever shape the mesh is evaluated in at the time - flat, in
+    this addon's normal 2D working view.
+    """
+    if hasattr(mesh, "calc_loop_triangles"):
+        mesh.calc_loop_triangles()
+    n_tri = len(mesh.loop_triangles)
+    tri = np.empty(n_tri * 3, dtype=np.int32)
+    mesh.loop_triangles.foreach_get("vertices", tri)
+    tri = tri.reshape(n_tri, 3)
+
+    p0, p1, p2 = co[tri[:, 0]], co[tri[:, 1]], co[tri[:, 2]]
+    # Un-normalised cross product = 2 x area, which is the weight we want.
+    fn = np.cross(p1 - p0, p2 - p0)
+    vn = np.zeros_like(co)
+    for corner in range(3):
+        for axis in range(3):
+            vn[:, axis] += np.bincount(
+                tri[:, corner], weights=fn[:, axis], minlength=len(co)
+            )
+    lengths = np.linalg.norm(vn, axis=1)
+    return vn / np.maximum(lengths, 1e-30)[:, None]
+
+
+def _smoothed_positions(co: np.ndarray, edges: np.ndarray, iters: int) -> np.ndarray:
+    """*iters* passes of  p = (p + mean of neighbours) / 2  over *co*."""
+    n = len(co)
+    a, b = edges[:, 0], edges[:, 1]
+    counts = np.bincount(a, minlength=n) + np.bincount(b, minlength=n)
+    counts = np.maximum(counts, 1).astype(np.float64)
+    q = co.copy()
+    for _ in range(iters):
+        acc = np.empty_like(q)
+        for axis in range(3):
+            acc[:, axis] = (
+                np.bincount(a, weights=q[b, axis], minlength=n)
+                + np.bincount(b, weights=q[a, axis], minlength=n)
+            )
+        q = 0.5 * q + 0.5 * (acc / counts[:, None])
+    return q
+
+
+def curvature_iterations(mean_edge_m: float, radius_m: float) -> int:
+    """Smoothing passes that put the kernel's standard deviation at *radius*.
+
+    One pass of  p = (p + mean of neighbours) / 2  is a diffusion step of
+    0.25 h^2, so after i passes the kernel's sigma is h sqrt(i/2) - invert
+    that for i. Clamped into [1, CURVATURE_MAX_ITERS].
+    """
+    if mean_edge_m <= 0.0:
+        return 1
+    iters = int(round(2.0 * (radius_m / mean_edge_m) ** 2))
+    return max(1, min(CURVATURE_MAX_ITERS, iters))
+
+
+def compute_curvature(guide_obj, radius_m: float):
+    """Write the Curvature Color Attribute onto the Guide. Returns
+    (error, stats). See the block comment above for what it measures."""
+    mesh = guide_obj.data
+    if len(mesh.vertices) == 0 or len(mesh.edges) == 0:
+        return "Guide has no geometry to measure curvature on.", None
+
+    t0 = time.time()
+    co = _extract_world_co_np(
+        mesh, guide_3d_shapekey(mesh), guide_obj.matrix_world
+    )
+    n = len(co)
+    n_edges = len(mesh.edges)
+    edges = np.empty(n_edges * 2, dtype=np.int32)
+    mesh.edges.foreach_get("vertices", edges)
+    edges = edges.reshape(n_edges, 2)
+
+    mean_edge = float(
+        np.linalg.norm(co[edges[:, 0]] - co[edges[:, 1]], axis=1).mean()
+    )
+    iters = curvature_iterations(mean_edge, radius_m)
+    normals = _vertex_normals_np(mesh, co)
+    smoothed = _smoothed_positions(co, edges, iters)
+    disp = np.einsum("ij,ij->i", normals, co - smoothed)
+
+    window = float(np.percentile(np.abs(disp), CURVATURE_WINDOW_PCT))
+    window = max(window, CURVATURE_WINDOW_FLOOR_M)
+    v = np.clip(0.5 + disp / (2.0 * window), 0.0, 1.0)
+    colors = np.ones((n, 4))
+    colors[:, 0] = v
+    colors[:, 1] = v
+    colors[:, 2] = v
+    _write_color_attr(mesh, CURVATURE_ATTR, colors)
+
+    return None, {
+        "radius_mm": radius_m * 1000.0,
+        "reached_mm": mean_edge * 1000.0 * (iters / 2.0) ** 0.5,
+        "iterations": iters,
+        "mean_edge_mm": mean_edge * 1000.0,
+        "window_mm": window * 1000.0,
+        "clipped_pct": float(100.0 * np.mean(np.abs(disp) > window)),
+        "seconds": time.time() - t0,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Bake (Color Attribute → image, Cycles EMIT)
 # ---------------------------------------------------------------------------
 
@@ -266,30 +442,68 @@ def _restore_render(saved) -> None:
             pass  # the object went away during the bake
 
 
-def _enable_collections_for(view_layer, obj):
-    """Make every layer-collection chain containing *obj* visible/included.
+def _set_collection_flags(lc, exclude, lc_hide, coll_hide) -> None:
+    """Write the three flags, skipping any that is already right.
 
-    Returns a list of (layer_collection, exclude, lc_hide, coll_hide) tuples
-    for restoring afterwards. Needed because baking requires the object to be
-    in the view layer — excluded/hidden parent collections silently break
-    bpy.ops.object.bake with 'No valid selected objects'.
+    Worth the three comparisons: assigning .exclude is not a plain flag write,
+    it cascades to the whole subtree and resyncs the view layer.
     """
-    saved = []
+    if lc.exclude != exclude:
+        lc.exclude = exclude
+    if lc.hide_viewport != lc_hide:
+        lc.hide_viewport = lc_hide
+    if lc.collection.hide_viewport != coll_hide:
+        lc.collection.hide_viewport = coll_hide
+
+
+def _enable_collections_for(view_layer, obj):
+    """Make every layer-collection chain containing *obj* visible/included,
+    and leave every other collection exactly as it was.
+
+    Returns a list of (layer_collection, exclude, lc_hide, coll_hide) tuples,
+    parents before their children, for restoring afterwards. Needed because
+    baking requires the object to be in the view layer — excluded/hidden
+    parent collections silently break bpy.ops.object.bake with 'No valid
+    selected objects'.
+
+    The list covers the whole tree rather than just the chain, because
+    clearing .exclude cascades: Blender sets it recursively, the way the
+    Outliner checkbox does. Measured on a demo file where the garment sat in
+    one collection and 14 unused high-poly meshes were parked in a second one
+    with its checkbox off — clearing exclude up the garment's chain pulled all
+    14 back into the view layer, still selected, _isolate_render then set
+    hide_render on them, and the bake died with 'Object "..." is not enabled
+    for rendering'. Writing every collection its own value, parents first,
+    undoes each cascade right after it happens; the restore pass repeats the
+    same order for the same reason.
+    """
+    order = []
+
+    def collect(lc):
+        order.append(lc)
+        for child in lc.children:
+            collect(child)
+
+    collect(view_layer.layer_collection)
+    saved = [(lc, lc.exclude, lc.hide_viewport, lc.collection.hide_viewport)
+             for lc in order]
+
+    chain = set()
 
     def walk(lc):
-        found = False
-        for child in lc.children:
-            if walk(child):
-                found = True
+        found = any([walk(child) for child in lc.children])
         if obj.name in lc.collection.objects or found:
-            saved.append((lc, lc.exclude, lc.hide_viewport, lc.collection.hide_viewport))
-            lc.exclude = False
-            lc.hide_viewport = False
-            lc.collection.hide_viewport = False
+            chain.add(lc.as_pointer())
             return True
         return False
 
     walk(view_layer.layer_collection)
+
+    for lc, exclude, lc_hide, coll_hide in saved:
+        if lc.as_pointer() in chain:
+            _set_collection_flags(lc, False, False, False)
+        else:
+            _set_collection_flags(lc, exclude, lc_hide, coll_hide)
     return saved
 
 
@@ -401,16 +615,6 @@ def _restore_local_views(saved) -> None:
 AO_NODE_SAMPLES = 64
 AO_BAKE_SAMPLES = 16
 
-# Pointiness values that map to pure black and pure white in the Curvature
-# pass. Blender's Pointiness reads exactly 0.5 on a flat surface (measured
-# headless on 5.0.1: a subdivided plane baked 0.5000 across all 4096 covered
-# pixels), under 0.5 where the surface is concave and over it where convex.
-# The window is that flat value +/- 0.15, kept symmetric so that a fold and
-# a ridge of equal sharpness land equally far from mid grey. Deliberately
-# NOT auto-scaled per mesh: a fixed window is what makes two bakes of two
-# different Guides (or the same Guide at two stages) readable side by side.
-POINTINESS_RAMP = (0.35, 0.65)
-
 
 def _build_emit_shader(nt, out_node, attr_name, shader, ao_distance_m):
     """Wire *out_node*'s Surface for an EMIT bake. No-op when attr_name and
@@ -434,17 +638,45 @@ def _build_emit_shader(nt, out_node, attr_name, shader, ao_distance_m):
         ao.only_local = True
         ao.inputs['Distance'].default_value = ao_distance_m
         nt.links.new(ao.outputs['Color'], emit.inputs['Color'])
-    elif shader == 'POINTINESS':
-        geo = nt.nodes.new('ShaderNodeNewGeometry')
-        ramp = nt.nodes.new('ShaderNodeValToRGB')
-        ramp.color_ramp.interpolation = 'LINEAR'
-        low, high = POINTINESS_RAMP
-        ramp.color_ramp.elements[0].position = low
-        ramp.color_ramp.elements[1].position = high
-        nt.links.new(geo.outputs['Pointiness'], ramp.inputs['Fac'])
-        nt.links.new(ramp.outputs['Color'], emit.inputs['Color'])
     else:
         raise ValueError(f"unknown shader {shader!r}")
+
+
+# Generative modifiers that lay a SECOND copy of the surface over the same UVs.
+# Solidify is the one a CLO Guide carries (a 1 mm shell for thickness): its
+# inner shell occupies every texel the Guide occupies, faces the other way, and
+# is what the bake actually samples. Measured on the production jacket Guide
+# (172k verts, 2048 px, Blender 5.0.1, Solidify thickness 1 mm offset -1,
+# show_render on): 91.2% of covered texels came back off the inner shell.
+# The Curvature pass was then a bit-exact mirror about 0.5 — ridges dark,
+# folds bright, median |with - (1 - without)| = 0.0002 — so a convex fold line
+# read as a dark line and looked "missing"; on the ridge measured for this
+# (the same jacket panel, verts 4374..4380) core fell to 0.443 against a
+# 0.500 flank, where the real surface gives 0.559. The AO pass came out
+# anti-correlated with the real one (r = -0.17, mean 0.439 against 0.684)
+# because its hemisphere pointed into the inside of the garment.
+# Suspending them for the duration of the bake is what makes every pass read
+# the side of the cloth the user is looking at.
+SHELL_MODIFIER_TYPES = {'SOLIDIFY'}
+
+
+def _suspend_shell_modifiers(obj):
+    """Turn off render visibility of shell-duplicating modifiers. Returns the
+    list to hand to _restore_shell_modifiers()."""
+    saved = []
+    for mod in obj.modifiers:
+        if mod.type in SHELL_MODIFIER_TYPES and mod.show_render:
+            saved.append((mod, mod.show_render))
+            mod.show_render = False
+    return saved
+
+
+def _restore_shell_modifiers(saved):
+    for mod, prev in saved:
+        try:
+            mod.show_render = prev
+        except ReferenceError:
+            pass
 
 
 def bake_to_image(
@@ -465,14 +697,14 @@ def bake_to_image(
     Returns an error string or None.
 
     The shader driving the EMIT bake is chosen by exactly one of:
-      attr_name  — a Color Attribute through Attribute->Emission (Residual/Sag)
-      shader='AO'         — Ambient Occlusion node -> Emission (Drape)
-      shader='POINTINESS' — Geometry Pointiness -> ColorRamp -> Emission (Drape)
+      attr_name  — a Color Attribute through Attribute->Emission
+                   (Residual/Sag/Curvature)
+      shader='AO' — Ambient Occlusion node -> Emission (Drape)
     attr_name=None and shader=None bakes a native Cycles pass instead
     (bake_type then names it), with no shader graph at all.
 
-    samples=None picks a sane default: an Attribute->Emission or Pointiness
-    bake is an exact passthrough (no ray variance, 1 sample is correct); the
+    samples=None picks a sane default: an Attribute->Emission bake is an
+    exact passthrough (no ray variance, 1 sample is correct); the
     AO node traces rays per shading sample and needs pixel-level averaging on
     top, so it gets AO_BAKE_SAMPLES.
 
@@ -535,6 +767,7 @@ def bake_to_image(
     prev_hide_viewport = obj.hide_viewport
     prev_hide_select = obj.hide_select
     prev_local_view = _enter_local_views(obj)
+    suspended_mods = []
     # Only for the shader bakes this add-on does (see _isolate_render): a
     # native Cycles pass could legitimately depend on the rest of the scene,
     # so leave the scene alone for those.
@@ -575,6 +808,7 @@ def bake_to_image(
         scene.render.bake.use_clear = True
         saved_bake = _force_bake_settings(scene.render.bake)
 
+        suspended_mods = _suspend_shell_modifiers(obj)
         saved_collections = _enable_collections_for(view_layer, obj)
         if isolate:
             isolated = _isolate_render(view_layer, obj)
@@ -582,8 +816,15 @@ def bake_to_image(
         obj.hide_render = False
         obj.hide_viewport = False
         obj.hide_select = False
-        for o in prev_selected:
-            o.select_set(False)
+        # Everything selected in the view layer right now, not the
+        # prev_selected snapshot taken above: bpy.ops.object.bake checks every
+        # selected object, and an object that is in the view layer but hidden
+        # from the render fails it with 'Object "..." is not enabled for
+        # rendering' — which _isolate_render has just made true of every
+        # object but this one.
+        for o in view_layer.objects:
+            if o.select_get():
+                o.select_set(False)
         obj.select_set(True)
         view_layer.objects.active = obj
 
@@ -630,6 +871,7 @@ def bake_to_image(
         scene.render.bake.use_clear = prev_use_clear
         _restore_bake_settings(scene.render.bake, saved_bake)
 
+        _restore_shell_modifiers(suspended_mods)
         _restore_render(isolated)
         obj.hide_viewport = prev_hide_viewport
         obj.hide_select = prev_hide_select
@@ -646,10 +888,11 @@ def bake_to_image(
         except RuntimeError:
             pass
         obj.hide_render = prev_hide_render
+        # Parents before children, the order _enable_collections_for saved
+        # them in, so that a parent's exclude cascade is overwritten by each
+        # child's own value instead of the other way round.
         for lc, exclude, lc_hide, coll_hide in saved_collections:
-            lc.exclude = exclude
-            lc.hide_viewport = lc_hide
-            lc.collection.hide_viewport = coll_hide
+            _set_collection_flags(lc, exclude, lc_hide, coll_hide)
 
 
 # ---------------------------------------------------------------------------
@@ -669,38 +912,25 @@ def bake_to_image(
 #              only_local is ON: the Guide occludes itself and nothing else,
 #              so the body mesh never darkens the map (the folds are the
 #              signal; a body shadow is not).
-#   Curvature  Geometry Pointiness -> ColorRamp -> Emission, baked as EMIT.
-#              The ramp positions are FIXED (POINTINESS_RAMP, a symmetric
-#              window around the flat value) rather than auto-scaled, so
-#              successive bakes stay directly comparable.
+#   Curvature  A scale-based curvature written to a Color Attribute by
+#              compute_curvature() -> Attribute -> Emission, baked as EMIT.
+#              It replaced a Geometry Pointiness pass, which could not see
+#              a broad ridge at all — see the Curvature map block above.
 #
 # Verified headless on Blender 5.0.1, background mode, CPU Cycles (Suzanne
 # subdiv 2, 7958 verts, 512px, --factory-startup): the AO node -> Emission
 # -> EMIT path returns real, distance-dependent data (covered-pixel mean
 # 0.870 / 0.921 / 0.961 and std 0.221 / 0.177 / 0.130 at Distance 1.0 /
-# 0.15 / 0.05 m), and Pointiness -> ColorRamp returns mean 0.559 std 0.073 —
-# the same profile as the production Curvature map (mean 0.531 std 0.052).
-# The addon's earlier note that "native AO baking returns all-zero headless"
+# 0.15 / 0.05 m). The addon's earlier note that "native AO baking returns
+# all-zero headless"
 # was about bake_type='AO', a different code path in Cycles; driving the AO
 # NODE through an emission shader is unaffected by that gap.
 #
-# Measured against what this replaced, on a production Guide
-# (283k verts, 1024px, GPU), covered pixels only:
-#
-#                     old (per-vertex)   new (shader)   hand-baked reference
-#   AO       mean          0.6516          0.6473            0.6503
-#            std           0.3212          0.3512            0.3276
-#   Curv     mean          0.8700          0.5339            0.5329
-#            std           0.2390          0.0777            0.0772
-#   time             27.7 s total       3.4 s total
-#
-# The old AO was broadly right and merely slow. The old Curvature was not:
-# at mean 0.87 it had washed almost white, which is the failure its own
-# auto-scale was meant to avoid — a fixed Pointiness ramp lands in the
-# middle of the range instead. (The Curv figures in the table above were
-# taken with an earlier, slightly narrower ramp window; widening the top
-# end to the symmetric 0.65 shifts the mean by a few percent and leaves
-# the shape of the result alone.)
+# Measured against the per-vertex AO this replaced, on a production Guide
+# (283k verts, 1024px, GPU), covered pixels only: mean 0.6516 -> 0.6473
+# against a hand-baked 0.6503, std 0.3212 -> 0.3512 against 0.3276, and
+# 27.7 s -> 3.4 s for the whole set. The old AO was broadly right and merely
+# slow.
 #
 # The product is baked into a third image rather than left to a Mix node in
 # the Preview Plane's material: Solid > Texture viewport shading draws the
@@ -1043,8 +1273,8 @@ def _guide_in_3d(guide_obj):
     ShapeKey value (and mute flag) on the way out.
 
     Cycles bakes the EVALUATED mesh, so with the Flat SK at 1.0 — this
-    addon's normal 2D working view — an AO or Pointiness bake would read a
-    dead-flat sheet: no folds, no creases, a uniform map. UVs are not
+    addon's normal 2D working view — an AO bake would read a dead-flat
+    sheet: no folds, no creases, a uniform map. UVs are not
     affected by shape keys, so zeroing the flat key gives 3D-shaped shading
     laid out on the flat pattern UVs, which is exactly what the hand-made
     reference maps in the production scene contain.
@@ -1119,6 +1349,8 @@ def bake_drape_maps(
     margin: int = 8,
     keep_in_file: bool = True,
     keep_passes: bool = False,
+    curv_radius_m: float = 0.008,
+    stats_out: Optional[dict] = None,
 ) -> Optional[str]:
     """Bake the drape reference off the Guide's 3D shape onto its flat UV
     layout: the AO and Curvature passes, and their product in the Drape map.
@@ -1128,7 +1360,11 @@ def bake_drape_maps(
     always re-baked together with the product, never on their own), and are
     deleted again once the product exists unless `keep_passes` keeps them
     around to be inspected.
+
+    `stats_out`, when given, is filled with what compute_curvature() measured
+    (the fitted black/white window above all), so the operator can report it.
     """
+    curv_stats = None
     try:
         with _guide_in_3d(guide_obj):
             err = bake_to_image(
@@ -1138,9 +1374,13 @@ def bake_drape_maps(
             )
             if err is not None:
                 return err
+            err, curv_stats = compute_curvature(guide_obj, curv_radius_m)
+            if err is not None:
+                return err
             err = bake_to_image(
                 context, guide_obj, image_name('CURVATURE', guide_obj),
-                resolution, margin, shader='POINTINESS', keep_in_file=False,
+                resolution, margin, attr_name=CURVATURE_ATTR,
+                keep_in_file=False,
             )
             if err is not None:
                 return err
@@ -1159,4 +1399,6 @@ def bake_drape_maps(
                 if img is not None:
                     drop_gpu_texture(img)
                     bpy.data.images.remove(img)
+        if stats_out is not None and curv_stats is not None:
+            stats_out.update(curv_stats)
     return None

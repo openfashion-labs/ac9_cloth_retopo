@@ -35,6 +35,9 @@ from .attachment import (
     load_boundary_from_mesh,
     rebind_attachments_island_aware,
     save_attachments_to_mesh,
+    stamp_guide_on_mesh,
+    guide_stamp_matches,
+    PROP_GUIDE_NTRIS,
     save_boundary_to_mesh,
     snap_vertices_to_islands_bvh,
 )
@@ -128,6 +131,23 @@ def _get_guide_cache(guide_obj, flat_sk: str) -> dict:
     return _guide_cache[key]
 
 
+def peek_guide_cache(guide_obj, flat_sk: str):
+    """Return an already-built Guide cache, without building one.
+
+    Draw callbacks use this read-only path so opening or redrawing a viewport
+    can never trigger the expensive Guide triangle extraction / BVH build.
+    The normal projection and Refresh paths remain responsible for warming the
+    cache via :func:`_get_guide_cache`.
+    """
+    if guide_obj is None or not flat_sk:
+        return None
+    try:
+        key = _guide_cache_key(guide_obj, flat_sk)
+    except (AttributeError, ReferenceError, TypeError):
+        return None
+    return _guide_cache.get(key)
+
+
 SHAPEKEY_NAME = "AC9_3D_Project"
 FAILED_GROUP_NAME = "AC9_Project_Failed"
 
@@ -208,10 +228,14 @@ def run_mirror_move_to_2d(context, retopo, guide_obj, flat_sk, points_3d_world):
     )
 
     existing = load_attachments_from_mesh(retopo_mesh)
-    if len(existing) != n or not any(a.is_ok for a in existing):
+    if (len(existing) != n or not any(a.is_ok for a in existing)
+            or not guide_stamp_matches(retopo_mesh, len(tris_2d))):
+        # A stale binding (different Guide triangulation) would snap every
+        # vertex into the wrong island — refuse rather than guess.
         return ProjectionResult(
             success=False,
-            error="No stored attachments — press 'Refresh Mirror' first.",
+            error=("No stored attachments for this Guide — press "
+                   "'Refresh Mirror' in Object Mode first."),
         )
 
     # Snap each vert to the nearest Guide-3D point within its own UV island.
@@ -233,6 +257,8 @@ def run_mirror_move_to_2d(context, retopo, guide_obj, flat_sk, points_3d_world):
             key.data[i].co = retopo_inv @ new_3d_world[i]
 
     save_attachments_to_mesh(retopo_mesh, new_atts)
+
+    stamp_guide_on_mesh(retopo_mesh, len(tris_2d))
     is_boundary = classify_boundary_verts(new_atts, cached["seam_mask"])
     save_boundary_to_mesh(retopo_mesh, is_boundary)
     from . import gpu_overlay
@@ -293,7 +319,17 @@ def run_forward_projection(
 
     if incremental:
         attachments = load_attachments_from_mesh(retopo_mesh)
-        if len(attachments) != n:
+        if len(attachments) != n or not guide_stamp_matches(retopo_mesh, len(tris_2d)):
+            # Stored indices belong to a different Guide triangulation (or
+            # predate the stamp): none of them can be trusted, so this is a
+            # full pass. Cheap once the Guide cache is warm.
+            if len(attachments) == n:
+                print(
+                    f"[AC9 CLO Projector] Stored attachments were bound to a "
+                    f"different Guide (stamp {retopo_mesh.get(PROP_GUIDE_NTRIS)}, "
+                    f"now {len(tris_2d)} triangles) — recomputing all {n} vertices."
+                )
+            new_verts_computed = n
             attachments = compute_attachments(retopo_points_world, tris_2d,
                                               bvh_2d=bvh_2d, progress=attach_tick)
         else:
@@ -339,6 +375,8 @@ def run_forward_projection(
         tick(1.0)
 
     save_attachments_to_mesh(retopo_mesh, attachments)
+
+    stamp_guide_on_mesh(retopo_mesh, len(tris_2d))
     # Classify each vertex by whether its 2D bary lands on a Guide seam edge.
     # Boundary verts will be pinned in subsequent Sync 3D > 2D operations so
     # the CLO pattern outline is never moved by 3D edits.
@@ -423,6 +461,8 @@ def run_live_update(
         key.data[i].co = co
 
     save_attachments_to_mesh(retopo_mesh, attachments)
+
+    stamp_guide_on_mesh(retopo_mesh, len(tris_2d))
     _update_failed_group(
         retopo, retopo_mesh, attachments,
         clear_failed_group=True, select_failed=False,
@@ -492,6 +532,14 @@ def run_reverse_projection(
     )
 
     old_attachments = load_attachments_from_mesh(retopo_mesh)
+    if not guide_stamp_matches(retopo_mesh, len(tris_2d)):
+        # Same guard as run_mirror_move_to_2d: the island-aware rebind below
+        # trusts the stored triangle indices, which belong to another Guide.
+        return ProjectionResult(
+            success=False,
+            error=("Stored attachments belong to a different Guide — press "
+                   "'Refresh Mirror' in Object Mode first."),
+        )
     edge_neighbors = build_edge_neighbors(retopo_mesh)
     # UV-boundary pin: verts identified as sitting on a Guide seam edge at
     # bind time are NEVER re-bound — their 2D position is the pattern truth.
@@ -591,6 +639,8 @@ def run_reverse_projection(
         key.data[i].co = co
 
     save_attachments_to_mesh(retopo_mesh, new_attachments)
+
+    stamp_guide_on_mesh(retopo_mesh, len(tris_2d))
     # Re-classify boundary: interior verts may have snapped onto a seam edge,
     # or boundary verts may have shifted (they shouldn't, but be safe).
     new_boundary = classify_boundary_verts(new_attachments, cached["seam_mask"])
@@ -875,6 +925,15 @@ def run_bind_new_verts(
         repaired += 1
 
     save_attachments_to_mesh(retopo_mesh, attachments)
+
+    # Only the freshly bound verts were computed against this Guide; the rest
+    # were loaded as they stood. Stamping unconditionally would tell the three
+    # paths that check the stamp that every attachment on this mesh indexes
+    # into the current Guide, which is the claim the stamp exists to refuse.
+    # A stamp that was already right stays right; a wrong one stays wrong, and
+    # the next full projection recomputes and stamps the result.
+    if guide_stamp_matches(retopo_mesh, len(tris_2d)):
+        stamp_guide_on_mesh(retopo_mesh, len(tris_2d))
     # Boundary flag: keep existing flags (written by forward sync / align) but
     # force the freshly-bound verts to False — even when their new attachment
     # happens to land on a seam edge.  Flagging them here would pin a possibly

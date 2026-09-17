@@ -88,14 +88,28 @@ Number of Vertices を 4、種別を **Greater Than** にすると選べます�
 
 1. **Guide Maps → Preview** で見たいマップを選び、**Plane** を押す。これで `AC9_BakePreview` プレーンが作られ、Solid のビューポートが自動で **Solid の色 = Texture** に切り替わります。
 2. それでも見えないときは、**Guide Maps** パネルの **Solid** の欄が **Texture** になっているか確認します（Viewport Shading > Color と同じプロパティです）。
-3. **z = 0 に平らに置かれている物を手で隠します。** プレーンは z = 0 の 5mm 下にあるので、平面状態の Guide・平面リトポ・自作のベイク板などが z = 0 にあると、上から見たときにそれらが手前に来てマップを完全に隠します（型紙の形が白く塗りつぶされて見えるのがこの状態）。**Plane** ボタンは他オブジェクトの表示を意図的に触りません。
-4. **Retopology** オーバーレイ（Overlays > Mesh Edit Mode > Retopology）は Edit Mode で編集中のメッシュを手前に持ち上げてZファイトを防ぐもので、下のプレーンを見えるようにする効果はありません。X-Ray は使いません。
-5. Rendered シェーディングのビューポートは **Plane** が触りません（そのままでも Emission マテリアルなので見えます）。
-6. ファイルを開き直した直後は **AO** / **Curvature** / **Drape** が空です。この 3 枚は .blend にパックされないので、**Drape → Bake** を押し直してください（数秒です）。
+3. **リトポ越しに見たいなら、**Add Transparent Material** を押します。** プレーンは z = 0 の 5mm 下にあるので、z = 0 の平面リトポが上から見たときに手前に来てマップを完全に隠します（型紙の形が白く塗りつぶされて見えるのがこの状態）。このボタンでリトポが半透明になり、**Alpha** スライダーで濃さを決められます。
+4. **リトポ以外で z = 0 に平らに置かれている物は手で隠します**（平面状態の Guide、自作のベイク板など）。**Plane** ボタンは他オブジェクトの表示を意図的に触りません。
+5. **Retopology** オーバーレイ（Overlays > Mesh Edit Mode > Retopology）が **OFF** になっているか確認します。ON だと編集中メッシュの面がテーマの色（実測アルファ 0.502）で塗り直され、**ゴーストの透明度が上書きされます**。**Plane** を押せば自動で OFF に戻ります。X-Ray も使いません。
+6. Rendered シェーディングのビューポートは **Plane** が触りません（そのままでも Emission マテリアルなので見えます）。
+7. ファイルを開き直した直後、**Keep Passes** を有効にしていなければ **AO** / **Curvature** は空です。この2枚は一時パスのため .blend にパックされません。合成済みの **Drape** は **Keep in file** が有効（既定）なら保持されます。パスが再度必要なとき、または設定を変えたときだけ再ベイクしてください。
 
-<!-- screenshot: Viewport Shading の Color = Texture と Retopology オーバーレイが ON の状態 -->
+**Add Transparent Material が「already carries ...」で止まる場合**: リトポが既に別のマテリアルを持っています。どのスロットが何かはユーザーの領分なので、このツールは並べ替えずに止まります。そのマテリアルを外してから押し直すか、半透明なしで作業してください。
+
+<!-- screenshot: Viewport Shading の Color = Texture と、半透明リトポ越しに見える Drape マップ -->
 
 なお、ベイク中の進捗は段階表示だけです。Blender のベイク本体は途中の割合を返さないため、その区間は止まって見えます（**Drape** は内部で AO と Curvature の 2 回ベイクします）。
+
+## Drape マップに稜線（凸の折り目）が出ない
+
+**症状**: 明らかに山になっている折り目が、Curvature / Drape マップでは周りと同じグレーのまま。凹の折り目だけが出る。
+
+**原因は 2 つあり、どちらも 1.1.0 で直っています。**
+
+1. **Guide に Solidify が付いていた。** CLO 由来の Guide は厚み用の Solidify を持っていることがあり、**ビューポートで OFF・レンダーで ON** だと、ベイクだけが厚みの**内側の面**を見ます。内側は UV が外側と完全に重なるので、マップは裏側の凹凸に置き換わります（実測: 被覆テクセルの 91.2% が内側由来、Curvature は 0.5 を軸にビット単位で反転＝**凸が黒・凹が白**、AO は実物と逆相関）。ベイク中だけ Solidify を外すようになったので、いまは表側が焼かれます。
+2. **Curvature が Geometry Pointiness だった。** Pointiness は隣接頂点 1 周だけを見る測度で、幅のある稜線ほど三角形分割のばらつきに埋もれます（実測: 法線方向の成分 0.0127 mm に対し接線方向のばらつき 0.245 mm）。いまは **Curvature Radius** で指定したスケールの凹凸を測るので、稜線が白い帯として出ます。
+
+**それでも出ないとき**: **Curvature Radius**（Guide Maps）を稜線の幅に合わせます。半径よりずっと広い起伏は基準ごと平滑化されて消えます。既定 8 mm で拾えないほど広い山なら 12〜20 mm を試してください。逆に細かい皺が欲しいなら 3〜5 mm です。
 
 ## 外部でノーマル / AO をベイクすると、別の面の模様が焼き込まれる
 
@@ -137,6 +151,22 @@ Number of Vertices を 4、種別を **Greater Than** にすると選べます�
 
 **まとめ**: 押し出しはギャップの半分程度（4 mm ギャップなら 2 mm）、レイ長の上限はその 2〜3 倍。単位はメートルなので、Blender の入力欄には `0.002` と `0.006` のように入れます。
 
+## Selection Link のマーカーが出ない
+
+**症状**: Retopo と Mirror を両方 Edit Mode にして頂点を選んでも、相手側に橙のマーカーが出ない。出ることもある。
+
+**原因**: 2 つあります。(1) マーカーは**アクティブなオブジェクト**（最後に選んだ方）の選択にだけ出ます。Mirror がアクティブなら Mirror → 2D だけ、Retopo がアクティブなら 2D → Mirror だけです。(2) 2D → Mirror の向きは Guide の投影キャッシュを使い、**ファイルを開いた直後は空**です。**Refresh** か投影を 1 回通すと温まり、Guide を編集・差し替えするとまた空になります。Mirror → 2D の向きは Refresh 時に記録した 2D 位置を読むだけなので、いつでも出ます。
+
+**対処**: 見たい向きの元になるオブジェクトをアクティブにする（Ctrl+クリックで最後に選ぶ）。2D → Mirror が出ないときは **3D View → Mirror → Refresh** を 1 回押す。
+
+## H で隠したのに Mirror が隠れない
+
+**症状**: Retopo の Edit Mode で **H** を押しても、Mirror は全部描かれたまま。
+
+**原因**: Blender は Edit Mode でしか隠しを描画しません。Mirror が Object Mode だと、隠しフラグは写っていても見た目は変わりません。また **Subdiv Preview がオンの間は同期そのものが止まります**（分割後の Mirror は頂点の対応が取れないため）。
+
+**対処**: Retopo と Mirror を両方選んで **Tab**（両方 Edit Mode）。Subdiv Preview はオフにするか、Retopo に **Subdivide** を適用してから使う。向きは Retopo → Mirror の一方向で、Mirror 側で隠しても Retopo には返りません。
+
 ## Mirror が古いままに見える
 
 **症状**: 2D を編集したのに Mirror の 3D 形状が前のまま。
@@ -175,7 +205,7 @@ Mirror を手で編集した場合、その編集は次の **Refresh** で消え
 - シーン設定（Retopo / Guide / Flat SK と全オプション。これが消えるとビューポートヘッダーのボタンも出なくなります）
 - Mirror オブジェクト
 - Bake Preview Plane（`AC9_BakePreview` のオブジェクト・メッシュ・マテリアル）
-- 全メッシュ上の `ac9_*` / `AC9_*` 属性レイヤ、`AC9_3D_Project` と `AC9_Separated` シェイプキー、頂点グループ `AC9_Project_Failed`、`AC9_Island_Colors` マテリアルスロット
+- 全メッシュ上の `ac9_*` / `AC9_*` 属性レイヤ、`AC9_3D_Project` と `AC9_Separated` シェイプキー、頂点グループ `AC9_Project_Failed`、`AC9_Island_Colors` と `AC9_RetopoTransparent`（旧名 `AC9_RetopoGhost`）のマテリアルスロット
 - シーン・オブジェクト・メッシュ上の `ac9_*` カスタムプロパティ
 - ベイク画像、ベイク用の一時マテリアル、レポート用テキストデータブロック
 

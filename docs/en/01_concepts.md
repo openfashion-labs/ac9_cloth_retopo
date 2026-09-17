@@ -64,7 +64,7 @@ The Retopo itself is left untouched (still flat, still editable). You can run th
 How sharply two faces meet across the edge between them.
 **0deg is flat** (the two faces lie in the same plane); the sharper the fold, the larger the angle.
 
-**Crease Min Angle** and **Fold Min Angle** are thresholds on this angle.
+**Crease Min Angle** is a threshold on this angle.
 
 ## "2D is authoritative, 3D is a mirror"
 

@@ -21,15 +21,15 @@ CLO / Marvelous Designer で衣装を書き出し、Blender に読み込みま�
 
 1. **Create Flat SK**（Object Mode）— UV アイランド境界で分割し、平面レイアウトをシェイプキーに書きます。以降の 2〜4 はこのシェイプキーを必要とします。
 2. **Find Folds** — 二面角が **Crease Min Angle** 以上の辺を折れ線としてタグ付けします。**Show** で何がタグされたか選択して確認、**Mark** / **Untag** で手直し、**×** で全消し。
-3. **Inset Line**（Edit Mode）— タグした折れ線を両側にインセットして帯にします。**Inset Pieces** より先に実行します（帯が、まだインセットされていない外周まで届く必要があるため）。
-4. **Inset Pieces**（Object Mode）— 型紙ごとに、外周から **Width** 以内の頂点を外周へ吸収してから、外周を **Width** だけインセットして平行な頂点列を作ります。
+3. **Inset Pieces**（Object Mode）— 型紙ごとに、平面シェイプキー上で外周を **Width** だけ内側へオフセットし、外周とその内側の行のあいだを三角形で張り直して、外周に平行な頂点列を作ります。頂点を溶接しないので、外周の頂点は 1 つも消えず、縫い合わせのペアも対応したまま保たれます。**Inset Line** より先に実行します（タグ済みの折れ線は制約として残るので、次の **Inset Line** は外周に触らずに済みます）。
+4. **Inset Line**（Edit Mode）— 折れ線を両側にインセットして帯にします。**選択した辺**（つながった 1 本が 1 つの線）を使い、何も選択していなければ **Find Folds** のタグ辺を使います。帯は **Inset Pieces** が外周沿いに残した行で止まります。
 
-**次へ**: パネル下の結果行に処理件数（吸収した頂点数、除去した針状三角形、帯幅の達成率など）が出ます。帯幅が **Width** に対して極端に細い箇所が報告されていないか見てください。
+**次へ**: パネル下の結果行に処理件数（張り直した面数、新しい行の頂点数、帯の面数、そして縫い合わせのずれ desync）が出ます。**desync が 0 でない**ときは縫い目の 1:1 対応が崩れているので、そのまま先へ進まないでください。
 Solidify は最後まで適用しないこと。
 
-![Guide Prep パネル（1 Flat SK / 2 Folds / 3 Lines / 4 Pieces）と、平面に展開された型紙。](../images/03_prepare_panel.png)
+![Guide Prep パネルと、平面に展開された型紙。](../images/03_prepare_panel.png)
 
-整えた効果は 3D に出ます。左が書き出したまま、右が **Inset Line** / **Inset Pieces** の後 — 折れ線に沿って走っていた鋭い折れが消えています。
+整えた効果は 3D に出ます。左が書き出したまま、右が **Inset Pieces** / **Inset Line** の後 — 折れ線に沿って走っていた鋭い折れが消えています。
 
 ![CLO 書き出しの肩まわり。左は折れ線に沿って鋭い筋が入っているが、右はインセット後で滑らかになっている。](../images/04_inset_before_after.jpg)
 
@@ -101,7 +101,10 @@ Mirror を見て、面の流れが破綻していないことを確認してく�
 
 1. Retopo と Mirror の**両方を選択**して **Tab**。2 つとも Edit Mode に入ります。
 2. 3D のビューポートで Mirror の頂点をクリックして、直したい箇所を 3D で指します。
-   **Selection Link** オーバーレイが、その頂点が 2D レイアウトのどこにあたるかを橙のマーカーで示します（逆向きも同じ）。
+   **Selection Link** オーバーレイが、その頂点が 2D レイアウトのどこにあたるかを橙のマーカーで示します。
+   マーカーはアクティブ（最後に選んだ）オブジェクトの選択にだけ出ます。Retopo をアクティブにすれば逆向き
+   （2D → Mirror）になりますが、この向きは Guide の投影キャッシュが要るので、ファイルを開いた直後は
+   **Refresh** を 1 回押してからでないと出ません。
 3. 2D のビューポートで **Retopo 側**を編集します。
 4. **Refresh** を押すと、Edit Mode を抜けないまま Mirror が追いつきます。
 
@@ -112,6 +115,7 @@ Mirror を見て、面の流れが破綻していないことを確認してく�
 込み入ったところを数枚だけ出して作業するときに使ってください。向きは Retopo → Mirror の一方向で、
 Mirror 側だけ隠しても Retopo には返りませんし、次の同期で Retopo の状態に戻されます。
 Blender は Edit Mode でしか隠しを描画しないので、**Mirror が Object Mode のときは見た目は変わりません**（フラグは入っているので、Tab で入れば隠れています）。
+**Subdiv Preview がオンの間はこの追従は働きません**。分割後の Mirror は頂点の対応が取れないためです。
 
 ![3D View パネルと、平面の Retopo から作られた 3D の Mirror。アウトライナーの `Retopology_AC93DMirror` がその実体。](../images/03_3dview_mirror.png)
 
@@ -123,11 +127,12 @@ Blender は Edit Mode でしか隠しを描画しないので、**Mirror が Obj
 2. **Residual → Bake** — Guide 表面と現在の Retopo のずれ（赤 = Guide が手前、青 = 奥、白 = 一致、暗い灰 = Retopo にまだ覆われていない）。画像 `AC9_ResidualMap_<Guide名>`。
 3. **Sag → Bake** — 型紙ごとの平面フィットからのずれ（白 = 手前に膨らむ、黒 = 奥に沈む、中間の灰 = 平面上）。画像 `AC9_SagMap_<Guide名>`。等高線が低周波のたわみに沿うエッジループの流れになります。
 4. **Drape → Bake** — Guide の 3D 形状から焼いた AO と Curvature を掛け合わせた 1 枚（`AC9_DrapeMap_<Guide名>`。AO / Curvature 単体は合成後に削除されます）。2D でナイフを入れるときの当たりに使います。AO の効くスケールは **Map Settings → AO Distance**（既定 30 mm）。真っ黒な型紙が出たらこの値が大きすぎる（密着した型紙同士が全遮蔽になる）。合成の比率は **AO Mix**（既定 0.7）。
-5. **Preview** で見たいマップを選び、**Plane** を押すと `AC9_BakePreview` という 1×1 m のプレーンが作られ、Solid シェーディングのビューポートが **Solid の色 = Texture** に切り替わります。あわせて **Retopology オーバーレイ**が ON になります。
+5. **Preview** で見たいマップを選び、**Plane** を押すと `AC9_BakePreview` という 1×1 m のプレーンが作られ、Solid シェーディングのビューポートが **Solid の色 = Texture** に切り替わります。あわせて X-Ray と **Retopology オーバーレイ**が OFF に戻ります。
+6. プレーンはリトポの 5 mm 下にあるので、そのままだとリトポに隠れます。**Add Transparent Material** を押すとリトポが半透明になり、切っている面越しにマップが読めます。濃さは **Alpha** スライダー（既定 0.35）。
 
 マップの画像は Guide ごとに分かれるので、複数の衣装を並行して進めても互いに上書きしません。ファイルが抱えているマップと容量は **Baked Maps** の一覧で確認・削除できます。
 
-**次へ**: マップが見えていること。見えないときは **Solid** の欄が **Texture** になっているか、**Retopology** オーバーレイが入っているかを確認してください（Preview Plane は Retopo の 5 mm 下にあります）。
+**次へ**: マップが見えていること。見えないときは **Solid** の欄が **Texture** になっているか、**Add Transparent Material** を押したかを確認してください（Preview Plane は Retopo の 5 mm 下にあります）。
 進捗はベイク中の段階表示のみで、Blender のベイク本体（`bpy.ops.object.bake`）は途中の割合を返さないため、その区間は止まって見えます。
 
 ![Guide Maps パネル（Residual / Sag / Drape の Bake と Preview の切り替え）。](../images/03_guide_maps_panel.png)

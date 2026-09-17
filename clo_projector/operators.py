@@ -137,6 +137,14 @@ class AC9_OT_RefreshMirror(bpy.types.Operator, _ModeSwitchMixin):
     )
     bl_options = {"REGISTER", "UNDO"}
 
+    preview_levels_override: bpy.props.IntProperty(
+        name="Preview Levels Override",
+        default=-1,
+        min=-1,
+        max=4,
+        options={"HIDDEN", "SKIP_SAVE"},
+    )
+
     @classmethod
     def poll(cls, context):
         # Works in Object Mode and in Edit Mode (including BOTH retopo + mirror
@@ -178,12 +186,20 @@ class AC9_OT_RefreshMirror(bpy.types.Operator, _ModeSwitchMixin):
                 result, mirror = mirror_mod.refresh_mirror_editmode(
                     context, retopo, guide_obj, flat_sk,
                     progress=prog,
+                    preview_levels_override=(
+                        None if self.preview_levels_override < 0
+                        else self.preview_levels_override
+                    ),
                 )
             else:
                 def go():
                     return mirror_mod.refresh_mirror(
                         context, retopo, guide_obj, flat_sk,
                         progress=prog,
+                        preview_levels_override=(
+                            None if self.preview_levels_override < 0
+                            else self.preview_levels_override
+                        ),
                     )
 
                 result, mirror = self._run_in_object_mode(context, go)
@@ -326,6 +342,11 @@ class AC9_OT_SyncMirrorTo2D(bpy.types.Operator, _ModeSwitchMixin):
             return False
         if mirror_mod.find_mirror(retopo) is None:
             cls.poll_message_set("No Mirror — press 'Refresh Mirror' first.")
+            return False
+        if mirror_mod.preview_levels(mirror_mod.find_mirror(retopo)) > 0:
+            cls.poll_message_set(
+                "Mirror is showing a subdiv preview — turn Preview off first."
+            )
             return False
         return True
 
@@ -840,6 +861,168 @@ class AC9_OT_ClearIslandColors(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def subdivide_and_project(context, obj, guide_obj, flat_sk, *, levels,
+                          snap_boundary, snap_distance, progress=None):
+    """Run the production Subdivide pipeline on ``obj`` and restore context.
+
+    This is shared by destructive Subdivide and the disposable Mirror preview,
+    which guarantees that preview and commit use the same Blender operator,
+    outline snap, attachment invalidation, and forward projection.
+    """
+    prev_active = context.view_layer.objects.active
+    prev_mode = context.object.mode if context.object is not None else "OBJECT"
+    prev_selected = [o for o in context.view_layer.objects if o.select_get()]
+    prev_hidden = obj.hide_get()
+    class _Helper:
+        def __init__(self, distance):
+            self.snap_distance = distance
+
+        @staticmethod
+        def report(_level, message):
+            print(f"[AC9 CLO Projector] {message}")
+
+    worker = _Helper(snap_distance)
+
+    def tick(value):
+        if progress is not None:
+            progress(value)
+
+    from . import handlers
+    with handlers.suppressed():
+        try:
+            if context.object is not None and context.object.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            for selected_obj in context.view_layer.objects:
+                selected_obj.select_set(False)
+            if prev_hidden:
+                obj.hide_set(False)
+            context.view_layer.objects.active = obj
+            obj.select_set(True)
+
+            n_old = len(obj.data.vertices)
+            parent_segments = []
+            if snap_boundary:
+                parent_segments = AC9_OT_SubdivideRetopo._collect_snappable_parent_edges(
+                    worker, obj
+                )
+
+            bpy.ops.object.mode_set(mode="EDIT")
+            # mesh.select_all is a silent no-op in background mode. Select the
+            # visible topology through the live BMesh, then run the production
+            # bpy.ops.mesh.subdivide operator in both UI and automated tests.
+            import bmesh
+            edit_bm = bmesh.from_edit_mesh(obj.data)
+            for vert in edit_bm.verts:
+                vert.select_set(not vert.hide)
+            for edge in edit_bm.edges:
+                edge.select_set(not edge.hide)
+            for face in edit_bm.faces:
+                face.select_set(not face.hide)
+            edit_bm.select_flush_mode()
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False,
+                                   destructive=False)
+            for _level in range(levels):
+                op_result = bpy.ops.mesh.subdivide(number_cuts=1, smoothness=0.0)
+                if op_result != {"FINISHED"}:
+                    raise RuntimeError("Blender Subdivide did not finish.")
+            bpy.ops.object.mode_set(mode="OBJECT")
+            tick(0.15)
+
+            n_new = len(obj.data.vertices)
+            moved = set()
+            if snap_boundary and parent_segments:
+                moved = AC9_OT_SubdivideRetopo._snap_boundary_to_seam(
+                    worker, obj, n_old, parent_segments
+                )
+            snapped = len(moved)
+            tick(0.25)
+
+            incremental_ok = AC9_OT_SubdivideRetopo._mark_dirty_for_incremental(
+                worker, obj, n_old, n_new, moved
+            )
+            result = core.run_forward_projection(
+                context, obj, guide_obj, flat_sk,
+                overwrite_shapekey=True, clear_failed_group=True,
+                select_failed=False, incremental=incremental_ok,
+                progress=(None if progress is None
+                          else lambda fraction: progress(0.25 + 0.55 * fraction)),
+            )
+            tick(0.80)
+            return result, n_old, n_new, snapped
+        finally:
+            if context.object is not None and context.object.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            for selected_obj in context.view_layer.objects:
+                selected_obj.select_set(False)
+            for selected_obj in prev_selected:
+                try:
+                    selected_obj.select_set(True)
+                except (ReferenceError, RuntimeError):
+                    pass
+            try:
+                context.view_layer.objects.active = prev_active
+            except (ReferenceError, RuntimeError):
+                context.view_layer.objects.active = None
+            if prev_active is not None and prev_mode != "OBJECT":
+                try:
+                    bpy.ops.object.mode_set(mode=prev_mode)
+                except (ReferenceError, RuntimeError):
+                    pass
+            try:
+                obj.hide_set(prev_hidden)
+            except (ReferenceError, RuntimeError):
+                pass
+
+
+class AC9_OT_ToggleSubdivPreview(bpy.types.Operator):
+    bl_idname = "ac9_cloth.toggle_subdiv_preview"
+    bl_label = "Toggle Subdiv Preview"
+    bl_description = (
+        "Show or hide a reversible, Guide-projected subdivision on the "
+        "Mirror. While it is on, every Refresh rebuilds it from the current "
+        "live 2D edit mesh; the low-poly Retopo is not changed"
+    )
+    bl_options = {"REGISTER"}
+
+    force_off: bpy.props.BoolProperty(
+        name="Turn Off",
+        default=False,
+        options={"HIDDEN", "SKIP_SAVE"},
+    )
+
+    @classmethod
+    def poll(cls, context):
+        if context.mode not in {"OBJECT", "EDIT_MESH"}:
+            cls.poll_message_set("Subdiv Preview runs in Object or Edit Mode.")
+            return False
+        top = getattr(context.scene, "ac9_cloth_retopo", None)
+        retopo = top.retopo_obj if top is not None else None
+        if retopo is None or retopo.type != "MESH":
+            cls.poll_message_set("Set the Retopo first.")
+            return False
+        mirror = mirror_mod.find_mirror(retopo)
+        shape_keys = retopo.data.shape_keys
+        if (shape_keys is not None
+                and core.SHAPEKEY_NAME in shape_keys.key_blocks
+                and shape_keys.key_blocks[core.SHAPEKEY_NAME].value > 0.5):
+            cls.poll_message_set("Subdiv Preview runs in the 2D state only.")
+            return False
+        return True
+
+    def execute(self, context):
+        top = context.scene.ac9_cloth_retopo
+        mirror = mirror_mod.find_mirror(top.retopo_obj)
+        current = mirror_mod.preview_levels(mirror)
+        dirty = mirror_mod.preview_is_dirty(mirror)
+        # A stale preview button is visually released; pressing it means
+        # recompute, not hide. A current depressed preview toggles off.
+        desired = (0 if self.force_off or (current > 0 and not dirty)
+                   else top.proj.subdiv_preview_levels)
+        return bpy.ops.ac9_cloth.refresh_mirror(
+            preview_levels_override=desired
+        )
+
+
 class AC9_OT_SubdivideRetopo(bpy.types.Operator):
     bl_idname = "ac9_cloth.subdivide_retopo"
     bl_label = "Subdivide Retopo"
@@ -913,99 +1096,15 @@ class AC9_OT_SubdivideRetopo(bpy.types.Operator):
             self.report({"ERROR"}, err)
             return {"CANCELLED"}
 
-        # Remember context so we can restore it.
-        prev_active = context.view_layer.objects.active
-        prev_mode = context.object.mode if context.object is not None else "OBJECT"
-        prev_selected = [o for o in context.view_layer.objects if o.select_get()]
-
         wm = context.window_manager
-        # Entered by hand rather than with a `with`, so the progress bar closes
-        # inside the finally below, after the mode restore — same reason
-        # _suppress_ctx just below is driven this way.
-        _progress_ctx = uic.ProgressScope(wm)
-        _progress_ctx.__enter__()
-
-        from . import handlers
-        # Suppress the Edit-exit auto-bind for the whole operator: the
-        # subdivide round-trip below would otherwise schedule a redundant
-        # bind pass on top of the full re-projection this operator does.
-        _suppress_ctx = handlers.suppressed()
-        _suppress_ctx.__enter__()
-        try:
-            if context.object is not None and context.object.mode != "OBJECT":
-                bpy.ops.object.mode_set(mode="OBJECT")
-            for o in context.view_layer.objects:
-                o.select_set(False)
-            context.view_layer.objects.active = retopo
-            retopo.select_set(True)
-
-            n_old = len(retopo.data.vertices)
-
-            # Record which boundary edges already hug a seam BEFORE subdividing.
-            # Only midpoints born on those edges may snap afterwards — snapping
-            # is meant to keep an outline that IS on the seam crisp on curves,
-            # not to drag unrelated boundaries (e.g. an island's symmetry
-            # centre-line, which has no seam of its own but can pass within the
-            # snap distance of someone else's outline segment).
-            parent_segments = []
-            if self.snap_boundary:
-                parent_segments = self._collect_snappable_parent_edges(retopo)
-
-            # ── Subdivide the 2D base mesh (simple = linear, no smoothing) ──
-            # Edit-mode subdivide interpolates all shape keys; we re-project the
-            # 3D ShapeKey afterwards so it conforms to the surface anyway.
-            bpy.ops.object.mode_set(mode="EDIT")
-            bpy.ops.mesh.select_all(action="SELECT")
-            for _ in range(self.levels):
-                bpy.ops.mesh.subdivide(number_cuts=1, smoothness=0.0)
-            bpy.ops.object.mode_set(mode="OBJECT")
-            wm.progress_update(15)
-
-            n_new = len(retopo.data.vertices)
-
-            # ── Snap new boundary verts onto the seam lines (Basis/2D space) ──
-            moved = set()
-            if self.snap_boundary and parent_segments:
-                moved = self._snap_boundary_to_seam(retopo, n_old, parent_segments)
-            snapped = len(moved)
-            wm.progress_update(25)
-
-            # ── Re-project to 3D, computing attachments for ONLY the verts that
-            # actually changed — new subdivision verts (index >= n_old) plus any
-            # boundary vert moved by the snap. Original, unmoved verts keep their
-            # attachments (subdivide preserves original vertex data), so we skip
-            # an expensive full BVH re-bind. Falls back to full if the stored
-            # attachment count doesn't line up.
-            incremental_ok = self._mark_dirty_for_incremental(retopo, n_old, n_new, moved)
-            result = core.run_forward_projection(
+        with uic.ProgressScope(wm):
+            result, _n_old, _n_new, snapped = subdivide_and_project(
                 context, retopo, guide_obj, flat_sk,
-                overwrite_shapekey=True, clear_failed_group=True,
-                select_failed=False, incremental=incremental_ok,
-                progress=uic.ProgressThrottle(wm, lo=25, hi=80),
+                levels=self.levels,
+                snap_boundary=self.snap_boundary,
+                snap_distance=self.snap_distance,
+                progress=uic.ProgressThrottle(wm),
             )
-            wm.progress_update(80)
-        finally:
-            _suppress_ctx.__exit__(None, None, None)
-            if context.object is not None and context.object.mode != "OBJECT":
-                bpy.ops.object.mode_set(mode="OBJECT")
-            for o in context.view_layer.objects:
-                o.select_set(False)
-            for o in prev_selected:
-                try:
-                    o.select_set(True)
-                except Exception:
-                    pass
-            context.view_layer.objects.active = prev_active
-            if prev_active is not None and prev_mode != "OBJECT":
-                try:
-                    bpy.ops.object.mode_set(mode=prev_mode)
-                except RuntimeError:
-                    pass
-            # Always closed here, even if an exception propagates out of the
-            # try above (mode-restore still needs to run first) — the two
-            # progress_update-then-report tails below no longer close the
-            # progress bar themselves.
-            _progress_ctx.__exit__(None, None, None)
 
         if not result.success:
             self.report({"ERROR"}, result.error or "Re-projection after subdivide failed.")
@@ -1047,6 +1146,7 @@ class AC9_OT_SubdivideRetopo(bpy.types.Operator):
                 # finally).
                 mirror_result, _mirror_obj = mirror_mod.refresh_mirror(
                     context, retopo, guide_obj, flat_sk,
+                    preview_levels_override=0,
                 )
                 if not mirror_result.success:
                     mirror_error = mirror_result.error or "Mirror refresh failed."

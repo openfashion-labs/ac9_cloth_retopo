@@ -16,6 +16,7 @@ import bpy
 
 from .. import ui_common as uic
 from . import core
+from . import preview as _preview
 
 
 class AC9_PT_BakeMaps(bpy.types.Panel):
@@ -65,6 +66,20 @@ class AC9_PT_BakeMaps(bpy.types.Panel):
         row.prop(p, "preview_map", text="")
         row.operator("ac9_cloth.bake_preview_plane", text="Plane",
                      icon='MESH_PLANE')
+
+        # The plane is 5 mm BELOW the flat retopo, so the retopo hides it.
+        # While the ghost is on, the slider is the useful control and the
+        # button has nothing left to do; before that it is the other way
+        # round, and the button gets the full width to carry its own label.
+        if _preview.ghost_is_on(top.retopo_obj):
+            row = uic.labeled_row(col, "Alpha")
+            row.prop(p, "ghost_alpha", text="", slider=True)
+            row.operator("ac9_cloth.remove_transparent_material", text="",
+                         icon='X')
+        else:
+            col.operator("ac9_cloth.add_transparent_material",
+                         icon='SHADING_RENDERED')
+
         # The viewport's own Solid colour source, surfaced here because the
         # map is invisible until it says Texture — and few users know the
         # setting exists. Same property as Viewport Shading > Color.
@@ -159,6 +174,7 @@ class AC9_PT_BakeMapsSettings(bpy.types.Panel):
         col = layout.column(align=True)
         col.label(text="Drape Maps", icon='SHADING_RENDERED')
         col.prop(p, "ao_distance_mm")
+        col.prop(p, "curv_radius_mm")
         col.prop(p, "drape_ao_mix")
         col.prop(p, "keep_drape_in_file")
         col.prop(p, "keep_drape_passes")

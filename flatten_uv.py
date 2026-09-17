@@ -22,13 +22,34 @@ without leaving Edit Mode or touching the UV editor context:
     island boundary too, nothing to split
   - an edge with 2+ linked faces is a boundary when, for either of its
     vertices, that vertex's UV differs between the faces on the two sides
-  - an edge already marked ``seam`` counts regardless (a hand-placed seam
-    should still end up split)
+
+The UV is the only thing that decides. ``edge.seam`` used to force a split
+on its own ("a hand-placed seam should still end up split"), and that was
+wrong in both directions: it is the flag this very operator writes, nothing
+ever clears it, and a re-run after the user welds the pieces (Merge by
+Distance) or joins the islands (UV Stitch) splits edges whose UV is now
+continuous. Splitting one of those buys nothing — both new vertices read the
+same UV, so they land on top of each other in the flat layout — while on the
+3D side it opens the surface, which a Solidify with Rim Fill then walls up
+(measured on a production pair of trousers: 234 such edges, 468 rim faces
+standing along the centre seam, plus corner normals decoded up to 48° off).
+Hand-placed internal lines have their own route through Mark Sharp
+(``analysis.find_marked_seam_pairs``), which does not split anything.
 
 Every detected edge gets ``edge.seam = True`` (so the result is visible in
 the UV editor, matching the old tool), but only edges with 2+ linked faces
 are handed to ``bmesh.ops.split_edges`` — a boundary edge has nothing to
-split.
+split. Flags that are already there are left alone, never cleared: they are
+the user's, and the island grouping elsewhere in the add-on reads them.
+
+Splitting also breaks the mesh's shading, because custom split normals are
+stored per smooth fan: the same stored data decodes to a different normal
+once the fan is cut in two. ``preserve_shading`` therefore snapshots the
+resolved corner normals into a temporary corner attribute (bmesh carries it
+through triangulate and split_edges) and writes them back afterwards —
+measured 48.00° -> 0.13° on the trousers, 23.80° -> 0.00° through the
+triangulate path. It is applied only when something was actually split, so a
+Guide that needs no split is not given custom normals it never had.
 """
 
 import math
@@ -92,12 +113,82 @@ def _split_bowtie_verts(bm, uv_layer):
     return count
 
 
-def flatten_object(obj, uv_name, triangulate):
+_SHADING_ATTR = "AC9_TMP_CORNER_NORMAL"
+
+
+def _snapshot_shading(mesh):
+    """Store the mesh's resolved corner normals in a temporary corner
+    attribute, so bmesh carries them through triangulate and split_edges.
+    Returns True when the snapshot was taken."""
+    if not mesh.polygons:
+        return False
+    _drop_shading_snapshot(mesh)        # a previous run that failed mid-way
+    try:
+        attr = mesh.attributes.new(_SHADING_ATTR, 'FLOAT_VECTOR', 'CORNER')
+        buf = [0.0] * (len(mesh.loops) * 3)
+        mesh.corner_normals.foreach_get("vector", buf)
+        attr.data.foreach_set("vector", buf)
+    except Exception:                   # never fail the flatten over this
+        _drop_shading_snapshot(mesh)
+        return False
+    return True
+
+
+def _restore_shading(mesh):
+    """Write the snapshot back as custom split normals. The corner count and
+    order survive triangulate + split_edges, so this is a straight copy."""
+    attr = mesh.attributes.get(_SHADING_ATTR)
+    if attr is None:
+        return False
+    n = len(mesh.loops)
+    buf = [0.0] * (n * 3)
+    attr.data.foreach_get("vector", buf)
+    normals = []
+    for i in range(n):
+        x, y, z = buf[i * 3], buf[i * 3 + 1], buf[i * 3 + 2]
+        length = math.sqrt(x * x + y * y + z * z)
+        if not math.isfinite(length) or length < 1e-12:
+            normals.append((0.0, 0.0, 1.0))
+        else:
+            normals.append((x / length, y / length, z / length))
+    _drop_shading_snapshot(mesh)
+    mesh.normals_split_custom_set(normals)
+    mesh.update()
+    return True
+
+
+def _drop_shading_snapshot(mesh):
+    attr = mesh.attributes.get(_SHADING_ATTR)
+    if attr is not None:
+        mesh.attributes.remove(attr)
+
+
+def _uv_breaks_at(e, uv_layer):
+    """True when `e`'s two sides disagree about either vertex's UV — i.e.
+    the edge really is a UV island boundary."""
+    vert_uv = {}
+    for l in e.link_loops:
+        nxt = l.link_loop_next
+        for v, uv in ((l.vert, l[uv_layer].uv),
+                      (nxt.vert, nxt[uv_layer].uv)):
+            prev = vert_uv.get(v)
+            if prev is None:
+                vert_uv[v] = (uv[0], uv[1])
+            elif abs(prev[0] - uv[0]) > 1e-6 or abs(prev[1] - uv[1]) > 1e-6:
+                return True
+    return False
+
+
+def flatten_object(obj, uv_name, triangulate, preserve_shading=True):
     """Flatten one mesh object's UV layer into a ShapeKey.
 
-    Returns (verts_before, verts_after, seam_count, mismatches), or None if
-    `uv_name` (or the mesh's active UV layer, when `uv_name` is empty) does
-    not resolve to an actual UV layer.
+    Returns (verts_before, verts_after, seam_count, mismatches, sk_name,
+    bowties, split_count, stale_seams, shading_kept), or None if `uv_name`
+    (or the mesh's active UV layer, when `uv_name` is empty) does not resolve
+    to an actual UV layer.
+
+    `stale_seams` counts edges carrying a seam flag the UV no longer backs
+    up; they are left whole (and their flag is left alone).
     """
     mesh = obj.data
 
@@ -111,6 +202,7 @@ def flatten_object(obj, uv_name, triangulate):
         uv_name = active.name
 
     verts_before = len(mesh.vertices)
+    snapped = _snapshot_shading(mesh) if preserve_shading else False
 
     bm = bmesh.new()
     bm.from_mesh(mesh)  # carries existing shape-key layers through too
@@ -121,31 +213,27 @@ def flatten_object(obj, uv_name, triangulate):
     uv_layer = bm.loops.layers.uv.get(uv_name)
     if uv_layer is None:
         bm.free()
+        _drop_shading_snapshot(mesh)
         return None
 
     # --- detect UV island boundaries, seam them, collect what to split
     to_split = []
     seam_count = 0
+    stale_seams = 0
     for e in bm.edges:
         linked = e.link_faces
-        detected = e.seam or len(linked) < 2
-        if not detected:
-            vert_uv = {}
-            for l in e.link_loops:
-                nxt = l.link_loop_next
-                for v, uv in ((l.vert, l[uv_layer].uv),
-                             (nxt.vert, nxt[uv_layer].uv)):
-                    prev = vert_uv.get(v)
-                    if prev is None:
-                        vert_uv[v] = (uv[0], uv[1])
-                    elif abs(prev[0] - uv[0]) > 1e-6 or abs(prev[1] - uv[1]) > 1e-6:
-                        detected = True
+        detected = len(linked) < 2 or _uv_breaks_at(e, uv_layer)
         if detected:
             e.seam = True
             seam_count += 1
             if len(linked) >= 2:
                 to_split.append(e)
+        elif e.seam:
+            # a seam flag the UV no longer backs up — see the module
+            # docstring: splitting here would only wall up the 3D side
+            stale_seams += 1
 
+    split_count = len(to_split)
     bmesh.ops.split_edges(bm, edges=to_split)
 
     # --- "bowtie" vertices: two UV islands touching at ONE vertex with no
@@ -182,6 +270,15 @@ def flatten_object(obj, uv_name, triangulate):
     mesh.update()
     bm.free()
 
+    # Only a mesh that was actually cut needs its shading pinned back down;
+    # putting custom normals on one that was left whole would be a side
+    # effect nobody asked for.
+    shading_kept = False
+    if snapped and (split_count or bowties):
+        shading_kept = _restore_shading(mesh)
+    else:
+        _drop_shading_snapshot(mesh)
+
     if mesh.shape_keys is None:
         obj.shape_key_add(name="Basis", from_mix=False)
 
@@ -193,7 +290,8 @@ def flatten_object(obj, uv_name, triangulate):
     kb.value = 1.0  # show the flat layout right after creating it
     mesh.update()
 
-    return verts_before, verts_after, seam_count, mismatches, sk_name, bowties
+    return (verts_before, verts_after, seam_count, mismatches, sk_name,
+            bowties, split_count, stale_seams, shading_kept)
 
 
 class AC9_OT_FlattenUVToSK(bpy.types.Operator):
@@ -219,6 +317,20 @@ class AC9_OT_FlattenUVToSK(bpy.types.Operator):
             "an all-triangle Guide (validate_guide rejects any n-gon or "
             "quad), so this is on by default — turn it off only if the Guide "
             "is already triangulated and you want to keep its exact topology"
+        ),
+        default=True,
+    )
+    preserve_shading: BoolProperty(
+        name="Keep Shading",
+        description=(
+            "Keep the Guide's shading exactly as it is. Splitting the UV "
+            "island boundaries cuts the smooth fans the custom split normals "
+            "are stored against, so the same data decodes to a different "
+            "normal and the drape picks up creases along every seam "
+            "(measured: up to 48 degrees). This snapshots the corner normals "
+            "and writes them back. It only acts when something was actually "
+            "split, so a Guide that needs no split is not given custom "
+            "normals it never had"
         ),
         default=True,
     )
@@ -268,7 +380,8 @@ class AC9_OT_FlattenUVToSK(bpy.types.Operator):
 
         wm = context.window_manager
         with uic.ProgressScope(wm):
-            result = flatten_object(guide, self.uv_layer, self.triangulate)
+            result = flatten_object(guide, self.uv_layer, self.triangulate,
+                                    self.preserve_shading)
 
         if result is None:
             msg = (f"Create Flat SK: '{guide.name}' has no UV layer to "
@@ -278,7 +391,8 @@ class AC9_OT_FlattenUVToSK(bpy.types.Operator):
             self.report({'WARNING'}, msg)
             return {'CANCELLED'}
 
-        verts_before, verts_after, _seams, mismatches, sk_name, bowties = result
+        (verts_before, verts_after, _seams, mismatches, sk_name, bowties,
+         split_count, stale_seams, shading_kept) = result
         top.guide_flat_shapekey = sk_name
         # The Guide's flat layout is the space every seam pair, ghost, fold and
         # anchor is measured in, so re-making it invalidates all of them.
@@ -294,8 +408,19 @@ class AC9_OT_FlattenUVToSK(bpy.types.Operator):
 
         msg = (f"Flat SK '{sk_name}' on '{guide.name}': "
                f"{verts_before:,} -> {verts_after:,} verts")
+        if split_count:
+            # The interior cuts are the ones that open the 3D surface up: a
+            # Solidify with Rim Fill walls every one of them. Say how many,
+            # so the number is visible before anyone goes looking for the
+            # creases it puts along the seams.
+            msg += f", {split_count:,} interior edges split"
         if bowties:
             msg += f", {bowties} point-contact verts separated"
+        if stale_seams:
+            msg += (f", {stale_seams:,} seam-marked edges left whole "
+                    f"(their UV is continuous)")
+        if shading_kept:
+            msg += ", shading kept"
         if mismatches:
             msg += f", {mismatches} UV mismatches (unexpected)"
         top.clo.status = msg

@@ -96,17 +96,54 @@ class AC9_PT_MirrorView(bpy.types.Panel):
         row = uic.labeled_row(layout, "Finalize")
         row.scale_y = 1.2
         row.operator("ac9_cloth.finalize_retopo", text="Finalize", icon='CHECKMARK')
+        col = layout.column(align=True)
+        col.prop(props, "finalize_close_seams", text="Close Seam Gaps")
+        sub = col.row()
+        # Welding needs the pair members to be exactly equal first, so it is
+        # only offered once the gaps are being closed.
+        sub.enabled = props.finalize_close_seams
+        sub.prop(props, "finalize_weld_seams", text="Weld Seam Vertices")
         uic.draw_hint(layout, "New <Retopo>_Final: 3D shape, UV = 2D layout, no ShapeKeys")
 
 
+def draw_subdiv_preview(layout, context, top):
+    """Persistent Mirror detail preview, usable while editing the Retopo."""
+    props = top.proj
+    retopo = top.retopo_obj
+    mirror = mirror_mod.find_mirror(retopo)
+    levels = mirror_mod.preview_levels(mirror)
+    dirty = mirror_mod.preview_is_dirty(mirror)
+
+    layout.label(text="Subdivision Mirror")
+    row = uic.labeled_row(layout, "Detail")
+    row.prop(props, "subdiv_preview_levels", text="")
+
+    row = uic.labeled_row(layout, "Mirror")
+    row.scale_y = 1.2
+    row.operator(
+        "ac9_cloth.toggle_subdiv_preview",
+        text=("Update Subdivided" if levels > 0 and dirty
+              else "Show Subdivided" if levels <= 0
+              else "Subdivided"),
+        icon="MOD_SUBSURF",
+        depress=(levels > 0 and not dirty),
+    )
+    if levels > 0:
+        row.operator("ac9_cloth.toggle_subdiv_preview", text="", icon="X").force_off = True
+    uic.draw_hint(layout, "Stays on when Refresh rebuilds the Mirror; Retopo stays low-poly")
+
+
 def draw_faces_object_tools(layout, context, top):
-    """Faces panel, Object Mode: real subdivision."""
+    """Faces panel, Object Mode: destructive subdivision."""
     from ..uv_seam_guide.gpu_overlay import _cache as seam_cache
 
-    row = uic.labeled_row(layout, "Subdivide")
+    props = top.proj
+
+    row = uic.labeled_row(layout, "Apply")
     row.scale_y = 1.2
-    row.operator("ac9_cloth.subdivide_retopo", text="Subdivide",
-                 icon="MOD_SUBSURF")
+    op = row.operator("ac9_cloth.subdivide_retopo", text="Apply Subdivision",
+                      icon="MOD_SUBSURF")
+    op.levels = props.subdiv_preview_levels
 
     # Soft prerequisite: Subdivide still runs without the seam analysis, but
     # then it cannot snap the new boundary vertices onto the Guide outline.

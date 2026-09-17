@@ -1,7 +1,7 @@
 """Operators for the Guide Maps tool.
 
 Residual and Sag compute a per-vertex Color Attribute on the Guide and bake
-that; Drape bakes two Cycles shaders (AO and Pointiness) straight off the
+that; Drape bakes an AO shader and a curvature attribute straight off the
 Guide's 3D shape. Each map lands in an image named after the Guide it came
 from ("AC9_SagMap_<Guide>"), overwritten on every re-bake of THAT Guide — so
 an open Image Editor refreshes in place, and garments worked on side by side
@@ -184,7 +184,7 @@ class AC9_OT_BakeSagMap(bpy.types.Operator):
 
 class AC9_OT_BakeDrapeMap(bpy.types.Operator):
     """Bake the drape reference off the Guide's 3D shape onto its flat
-    layout: Ambient Occlusion and Curvature (Geometry Pointiness), and their
+    layout: Ambient Occlusion and Curvature (at the chosen radius), and their
     product into 'AC9_DrapeMap_<Guide name>' — the same two passes as baking
     them by hand plus the shader multiply, in one click. The
     two passes are deleted again once the product exists (see 'Keep
@@ -215,11 +215,15 @@ class AC9_OT_BakeDrapeMap(bpy.types.Operator):
             # brackets the pair.
             wm.progress_update(15)
             core.follow_guide_rename(top.guide_obj)
+            drape_stats = {}
             err = core.bake_drape_maps(
                 context, top.guide_obj, int(p.resolution),
-                p.ao_distance_mm / 1000.0, p.drape_ao_mix,
+                p.ao_distance_mm / 1000.0,
+                curv_radius_m=p.curv_radius_mm / 1000.0,
+                ao_factor=p.drape_ao_mix,
                 keep_in_file=p.keep_drape_in_file,
                 keep_passes=p.keep_drape_passes,
+                stats_out=drape_stats,
             )
             wm.progress_update(85)
             if err is not None:
@@ -229,7 +233,10 @@ class AC9_OT_BakeDrapeMap(bpy.types.Operator):
             passes = ("; the passes are kept as separate images"
                       if p.keep_drape_passes else
                       "; the AO / Curvature passes were dropped")
-            msg = (f"AO ({p.ao_distance_mm:.0f} mm) x Curvature "
+            window = drape_stats.get("window_mm")
+            curv = (f"Curvature (r {p.curv_radius_mm:.1f} mm"
+                    + (f", +-{window:.2f} mm" if window else "") + ")")
+            msg = (f"AO ({p.ao_distance_mm:.0f} mm) x {curv} "
                    f"(mix {p.drape_ao_mix:.2f}) baked to "
                    f"'{core.image_name('DRAPE', top.guide_obj)}'{passes}.")
             top.status_maps = f"Drape: {msg}"
@@ -246,12 +253,15 @@ class AC9_OT_BakePreviewPlane(bpy.types.Operator):
     """Create (or reuse) a 1x1m plane — 'AC9_BakePreview' — in Flat SK
     space, shaded with the map chosen by 'Preview' so it can be inspected in
     the viewport without an Image Editor open. Switches each 3D viewport that
-    is in Solid to Solid > Texture, and turns the Retopology overlay on.
+    is in Solid to Solid > Texture, and clears X-Ray and the Retopology
+    overlay (the overlay would override the ghost material in Edit Mode).
 
     The plane sits 5 mm BELOW z = 0, so anything else lying flat at z = 0 —
     the Guide in its Flat SK pose, the flat retopo, a hand-made bake board —
-    covers it when you look down from above. Hide those by hand; this button
-    deliberately does not touch other objects' visibility. Object Mode only"""
+    covers it when you look down from above. The retopo is the one you cannot
+    just hide, so use 'Add Transparent Material' for that; hide the rest by
+    hand, as this button deliberately does not touch other objects'
+    visibility. Object Mode only"""
 
     bl_idname = "ac9_cloth.bake_preview_plane"
     bl_label = "Preview Plane"
@@ -280,7 +290,98 @@ class AC9_OT_BakePreviewPlane(bpy.types.Operator):
             msg += f" — viewport: {shading_note}"
         # The plane is below z = 0; the flat Guide and retopo are AT z = 0 and
         # hide it from above. Say so, since X-Ray no longer papers over it.
-        msg += ". Hide anything lying flat at z=0 (Guide / retopo) to see it"
+        if _preview.ghost_is_on(top.retopo_obj):
+            msg += ". Hide anything else lying flat at z=0 (Guide) to see it"
+        else:
+            msg += (". Hide anything lying flat at z=0 — or press "
+                    "'Add Transparent Material' to see through the retopo")
+        self.report({"INFO"}, msg)
+        return {"FINISHED"}
+
+
+class AC9_OT_AddTransparentMaterial(bpy.types.Operator):
+    """Put a transparent working material — 'AC9_RetopoTransparent' — on the Retopo
+    Mesh, so the Preview Plane 5 mm below reads through the faces you are
+    cutting instead of being hidden by them. 'Alpha' then sets how
+    see-through it is.
+
+    The file's existing transparent material is reused when there is one, keeping
+    the alpha already set on it. Refused when the retopo carries any other
+    material: which slot is which is the user's business, and rearranging it
+    is not this tool's call.
+
+    Nothing in Preferences is touched — the alpha rides on the material and is
+    saved in the .blend. Finalize strips the ghost from the deliverable and
+    Clear All removes it outright, so it cannot leave with a garment.
+    Object Mode only"""
+
+    bl_idname = "ac9_cloth.add_transparent_material"
+    bl_label = "Add Transparent Material"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == "OBJECT"
+
+    def execute(self, context):
+        top = _top(context)
+        retopo = top.retopo_obj
+        if retopo is None or retopo.type != 'MESH':
+            self.report({"ERROR"}, "Pick a Retopo Mesh first")
+            return {"CANCELLED"}
+
+        _mat, err = _preview.add_ghost(retopo)
+        if err is not None:
+            top.status_maps = f"Transparent material: {err}"
+            self.report({"ERROR"}, err)
+            return {"CANCELLED"}
+
+        # The Retopology overlay repaints edit-mesh faces from the theme and
+        # would make the alpha below do nothing. Cleared across every
+        # workspace, not just this one, so switching tabs does not look like
+        # the ghost is broken.
+        cleared = _preview.clear_retopology_overlay()
+
+        pct = int(round(_preview.get_ghost_alpha(retopo) * 100))
+        msg = (f"'{_preview.GHOST_MAT_NAME}' is on '{retopo.name}' at "
+               f"{pct}% opacity — drag 'Alpha' to change it")
+        if cleared:
+            msg += (f" (Retopology overlay switched off in {cleared} 3D "
+                    f"view{'s' if cleared > 1 else ''} — it would have "
+                    f"overridden this)")
+        top.status_maps = f"Transparent material: {msg}"
+        self.report({"INFO"}, msg)
+        return {"FINISHED"}
+
+
+class AC9_OT_RemoveTransparentMaterial(bpy.types.Operator):
+    """Take the transparent working material back off the Retopo Mesh,
+    leaving its material slots as they were. The material itself stays in the
+    file with the alpha you set, ready to be put back on. Object Mode only"""
+
+    bl_idname = "ac9_cloth.remove_transparent_material"
+    bl_label = "Remove Transparent Material"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == "OBJECT"
+
+    def execute(self, context):
+        top = _top(context)
+        retopo = top.retopo_obj
+        if retopo is None or retopo.type != 'MESH':
+            self.report({"ERROR"}, "Pick a Retopo Mesh first")
+            return {"CANCELLED"}
+
+        n = _preview.remove_ghost(retopo)
+        if not n:
+            self.report({"INFO"}, f"'{retopo.name}' is not carrying it")
+            return {"CANCELLED"}
+
+        msg = (f"'{_preview.GHOST_MAT_NAME}' off '{retopo.name}'; the "
+               f"material stays in the file with its alpha")
+        top.status_maps = f"Transparent material: {msg}"
         self.report({"INFO"}, msg)
         return {"FINISHED"}
 

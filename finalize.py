@@ -61,6 +61,65 @@ class AC9_OT_FinalizeRetopo(bpy.types.Operator):
             return False
         return True
 
+    def _close_seams(self, context, top, retopo, positions_local, wm):
+        """Pull matched seam pairs onto one 3D point. Returns (msg, pairs).
+
+        Runs its own seam analysis rather than reading the overlay's cache, and
+        takes SEWN pairs only. Marked (layered) seams must not come in here:
+        those are a pocket outline projected onto the body panel, and the two
+        sides are genuinely at different places in 3D — find_marked_seam_pairs
+        measures that gap at anywhere from ~0 to over 1 cm depending on drape.
+        Pulling them together would press the pocket flat into the body. The
+        cache holds whichever mix the user last analysed with, so it cannot be
+        trusted here; measured with marked pairs included, one vertex of this
+        garment was moved 6.027 mm instead of the 0.428 mm the real seams ask
+        for.
+
+        Never fails the Finalize: a seam analysis that cannot run is reported
+        in the result line and the projected positions go through untouched.
+        The deliverable is still correct, just with the gaps it always had.
+        """
+        if not top.proj.finalize_close_seams:
+            return "", []
+
+        from .uv_seam_guide import seam_close
+        from .uv_seam_guide import analysis as seam_analysis
+        from .clo_projector import guide as pguide
+
+        guide_obj = top.guide_obj
+        flat_sk = top.guide_flat_shapekey
+        props = top.seam
+        try:
+            pairs = seam_analysis.find_seam_pairs_flat(
+                guide_obj, flat_sk,
+                precision_flat=int(props.precision),
+                match_distance=props.match_distance_3d,
+            )
+            if not pairs:
+                return ", no sewn seams found", []
+
+            fs = pguide.flat_scale(guide_obj, flat_sk)
+            matched, n_unmatched = seam_close.find_matched_seam_pairs(
+                guide_obj, flat_sk, retopo, pairs,
+                max_distance=props.max_distance_uv * fs,
+                bond_distance=props.bond_distance * fs,
+                progress=uic.ProgressThrottle(wm, lo=70, hi=78),
+            )
+        except Exception as exc:                       # noqa: BLE001
+            print(f"[AC9] Finalize: seam close skipped — {exc}")
+            return ", seam close skipped (see console)", []
+
+        n_groups, n_moved, max_shift = seam_close.coincide(
+            positions_local, matched)
+        msg = f", closed {n_groups} seam group(s)"
+        if n_moved:
+            msg += f" (moved {n_moved} verts, max {max_shift * 1000.0:.3f} mm)"
+        if n_unmatched:
+            # These are the red ghosts. Nothing to be coincident WITH, so they
+            # stay where they are — and stay a hole in the deliverable.
+            msg += f", {n_unmatched} unpaired left open"
+        return msg, matched
+
     def execute(self, context):
         top = context.scene.ac9_cloth_retopo
         retopo = top.retopo_obj
@@ -89,6 +148,14 @@ class AC9_OT_FinalizeRetopo(bpy.types.Operator):
             sk = retopo.data.shape_keys.key_blocks[core.SHAPEKEY_NAME]
             positions_local = [sk.data[i].co.copy() for i in range(n)]
 
+            # Each vertex was projected onto the Guide on its own, so the two
+            # sides of a sewn seam land on separate points and the deliverable
+            # ships a crack. Pull matched pairs onto one point before the copy
+            # is written. See uv_seam_guide.seam_close for the measurements.
+            seam_msg, seam_pairs_found = self._close_seams(
+                context, top, retopo, positions_local, wm)
+            wm.progress_update(78)
+
             # Keep the retopo displayed flat (2D), same as Refresh Mirror.
             retopo.active_shape_key_index = 0
             retopo.data.shape_keys.key_blocks[core.SHAPEKEY_NAME].value = 0.0
@@ -99,6 +166,11 @@ class AC9_OT_FinalizeRetopo(bpy.types.Operator):
             for coll in colls:
                 coll.objects.link(final)
             final.matrix_world = retopo.matrix_world.copy()
+            # data.copy() names the mesh after the retopo with a numeric
+            # suffix, so the deliverable's object and its mesh read as two
+            # different things in the Properties editor. Blender appends its
+            # own suffix here too if the name is taken, and both stay in step.
+            me.name = final.name
 
             # Strip everything the copy inherited from the retopo: ShapeKeys,
             # then AC9 attribute layers and custom properties.
@@ -127,6 +199,32 @@ class AC9_OT_FinalizeRetopo(bpy.types.Operator):
             for key in [k for k in final.keys() if k.startswith("ac9_")]:
                 del final[key]
 
+            # The projector records the Guide's triangle count on the retopo's
+            # MESH datablock (ac9_guide_ntris), and data.copy() carries
+            # mesh-level custom properties over exactly like the attribute
+            # layers above — the object-level loop never sees them.
+            for key in [k for k in me.keys() if k.startswith("ac9_")]:
+                del me[key]
+
+            # Vertex group names live on the mesh, so the copy shows the
+            # projector's AC9_Project_Failed marker (and the NK_ name it used
+            # before the rename) even on a brand-new object, weightless and
+            # meaningless outside the working retopo. Only the add-on's own
+            # groups go: anything the user put there is theirs.
+            for group in [g for g in final.vertex_groups
+                          if g.name.startswith(("AC9_", "NK_"))]:
+                final.vertex_groups.remove(group)
+
+            # Material slots ride along in data.copy() the same way attributes
+            # do, and the add-on puts working materials on the retopo itself
+            # (the Guide Maps ghost that makes it see-through, Island
+            # Colours). Every name the add-on persists carries the AC9_ prefix
+            # by convention, so that is the test. Without this a deliverable
+            # leaves with a half-transparent viewport material on it.
+            for i in reversed([i for i, m in enumerate(me.materials)
+                               if m is not None and m.name.startswith("AC9_")]):
+                me.materials.pop(index=i)
+
             # Smooth, like the mirror viewer and like the Guide it was
             # projected onto. The copy inherits the retopo's shading, and the
             # retopo is a working mesh nobody shades — measured 0 of 3,508
@@ -135,6 +233,17 @@ class AC9_OT_FinalizeRetopo(bpy.types.Operator):
             # facets.
             if len(me.polygons):
                 me.polygons.foreach_set("use_smooth", [True] * len(me.polygons))
+
+            # Welding is the opt-in half and runs last, on the copy only: the
+            # positions are already exactly equal, so the merge cannot reach
+            # anything but the pairs it was given.
+            n_welded = 0
+            if (top.proj.finalize_close_seams and top.proj.finalize_weld_seams
+                    and seam_pairs_found):
+                from .uv_seam_guide import seam_close
+                n_welded = seam_close.weld(me, seam_pairs_found)
+                if n_welded:
+                    seam_msg += f", welded {n_welded}"
 
             me.update()
 
@@ -150,8 +259,8 @@ class AC9_OT_FinalizeRetopo(bpy.types.Operator):
         n_ngon, largest_ngon = core.ngon_stats(me)
         ngon_msg = (f", {n_ngon} n-gon(s) (largest {largest_ngon}v)"
                     if n_ngon else "")
-        msg = (f"Finalize: {final.name}, {n} verts{ngon_msg}, "
-               f"UV from 2D layout")
+        msg = (f"Finalize: {final.name}, {len(me.vertices)} verts{ngon_msg}, "
+               f"UV from 2D layout{seam_msg}")
         top.status_guide = msg
         self.report({'INFO'}, msg)
         return {'FINISHED'}

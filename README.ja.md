@@ -8,7 +8,7 @@ CLO / Marvelous Designer で作った衣装メッシュを、平面に展開し�
 3D の形は、平面のリトポを高ポリの Guide へ重心座標で投影して得ます。編集は常に 2D、3D は閲覧専用の鏡（Mirror）という設計です。
 
 - **対応 Blender**: 5.0 以上（5.0.1 / 5.1.1 / 5.2.1 LTS で確認）
-- **バージョン**: 1.0.0
+- **バージョン**: 1.1.0
 - **ライセンス**: GPL-3.0-or-later（[LICENSE](LICENSE)）
   Copyright (C) 2026 OpenFashion. 本プログラムはフリーソフトウェアです。
   Free Software Foundation が公表した GNU General Public License の
@@ -46,7 +46,7 @@ blender --command extension build --source-dir ac9_cloth_retopo --output-dir .
 
 ## 状態
 
-v1.0.0。
+v1.1.0。
 未完成の機能は Add-on Preferences の **Experimental tools** を ON にしたときだけ表示されます
 （既定 OFF）: Grid Regions, Align to Outline, Mesh Edit, Quad Fix, Legacy Flip, および
 Density 一族（Density / Even Out / Count / Spacing / Pin / Corner）。それぞれ何が未完成なのかは

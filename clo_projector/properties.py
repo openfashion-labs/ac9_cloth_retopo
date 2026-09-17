@@ -12,7 +12,7 @@ UV seam lines, which benefit from always-on-top line rendering.
 """
 
 import bpy
-from bpy.props import BoolProperty, FloatProperty, StringProperty
+from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty
 from bpy.types import Object, PropertyGroup
 
 _ISLAND_MAT_NAME = "AC9_Island_Colors"
@@ -29,6 +29,14 @@ def _tag_redraw_3d_prop(self, context):
     """Redraw all 3D viewports when a draw-only property changes."""
     from .selection_overlay import invalidate_selection
     invalidate_selection()
+
+
+def _mark_subdiv_preview_dirty(self, context):
+    """A changed level makes the currently displayed preview stale."""
+    from . import mirror
+    top = getattr(getattr(context, "scene", None), "ac9_cloth_retopo", None)
+    if top is not None:
+        mirror.mark_preview_dirty(top.retopo_obj)
 
 
 def _boundary_update(self, context):
@@ -93,11 +101,10 @@ class AC9CloProjectorProps(PropertyGroup):
     show_selection_link: BoolProperty(
         name="Selection Link",
         description=(
-            "Draw orange markers on the partner object at the vertices "
-            "corresponding to the current selection. Select on the 2D retopo to "
-            "see where they are on the 3D mirror — or select on the mirror to "
-            "find them in the 2D layout. Works with vertex / edge / face / loop "
-            "/ shortest-path selections"
+            "Draw orange markers at corresponding positions. A 2D Retopo "
+            "selection uses its live Guide projection; a Mirror selection "
+            "uses the 2D source stored by the last Refresh. Works with vertex "
+            "/ edge / face / loop / shortest-path selections"
         ),
         default=True,
         update=_tag_redraw_3d_prop,
@@ -109,6 +116,18 @@ class AC9CloProjectorProps(PropertyGroup):
         min=2.0,
         soft_max=24.0,
         update=_tag_redraw_3d_prop,
+    )
+
+    subdiv_preview_levels: IntProperty(
+        name="Levels",
+        description=(
+            "Subdivision levels shared by the reversible Mirror preview and "
+            "the destructive Subdivide operation"
+        ),
+        default=1,
+        min=1,
+        max=4,
+        update=_mark_subdiv_preview_dirty,
     )
 
     show_experimental: BoolProperty(
@@ -174,6 +193,42 @@ class AC9CloProjectorProps(PropertyGroup):
         max=1.0,
         step=5,
         update=_update_island_alpha,
+    )
+
+    # ── Finalize ───────────────────────────────────────────────────────────
+    finalize_close_seams: BoolProperty(
+        name="Close Seam Gaps",
+        description=(
+            "Pull the two sides of every sewn seam onto one shared 3D point, "
+            "so the deliverable has no crack along its seams. Finalize "
+            "projects each vertex onto the Guide on its own, and the Guide "
+            "itself does not hold the two sides of a sewn seam at the same "
+            "place — CLO leaves them apart — so without this the gap comes "
+            "straight through into the Final. Positions only: no vertex is "
+            "created, removed or merged, the UV islands stay split, and each "
+            "vertex moves at most half the gap it was closing. Only pairs "
+            "whose ghost is PLACED are touched; an unplaced (red) ghost has no "
+            "counterpart to meet, so those vertices are left alone and counted "
+            "in the report. Sewn seams only — a layered seam (a pocket marked "
+            "onto a body panel) is a separate layer resting on the surface, "
+            "not the same spot, so those are never pulled together"
+        ),
+        default=True,
+    )
+    finalize_weld_seams: BoolProperty(
+        name="Weld Seam Vertices",
+        description=(
+            "Also merge each group of now-coincident seam vertices into a "
+            "single vertex. OFF by default because the Final goes to baking "
+            "next, and baking wants the two sides of a seam as separate "
+            "vertices — splitting a welded mesh back apart per UV island is "
+            "real work, while welding an unwelded one is a single Merge by "
+            "Distance. So the Final ships unwelded and you weld when you "
+            "actually want it. Needs Close Seam Gaps, which makes the members "
+            "of a group exactly equal so the merge cannot pick up anything "
+            "else"
+        ),
+        default=False,
     )
 
     # ── Seam Lines Overlay ─────────────────────────────────────────────────

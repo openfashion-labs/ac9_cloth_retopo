@@ -21,15 +21,15 @@ Every step works on the **Guide**, so set **Guide** in the **Setup** panel above
 
 1. **Create Flat SK** (Object Mode) — splits at UV island boundaries and writes the flat layout to a shape key. Steps 2–4 below need this shape key.
 2. **Find Folds** — tags edges as fold lines where the dihedral angle is at least **Crease Min Angle**. Use **Show** to select and check what got tagged, **Mark** / **Untag** to adjust by hand, and **×** to clear everything.
-3. **Inset Line** (Edit Mode) — insets the tagged fold lines on both sides into a band. Run this before **Inset Pieces** (the band needs to reach an outline that hasn't been inset yet).
-4. **Inset Pieces** (Object Mode) — for each pattern piece, absorbs vertices within **Width** of the outline into the outline, then insets the outline by **Width** to create a parallel row of vertices.
+3. **Inset Pieces** (Object Mode) — for each pattern piece, offsets the outline inward by **Width** on the flat shape key and rebuilds the ring between the outline and that new row as triangles, creating a vertex row parallel to the outline. Nothing is welded, so every outline vertex survives and the sewn pairs stay matched. Run this before **Inset Line** (the tagged fold lines are kept as constraints, so Inset Line never has to touch the outline).
+4. **Inset Line** (Edit Mode) — insets a fold line on both sides into a band. Uses the **selected edges** (each connected run is one line); with nothing selected, it falls back to the **Find Folds** tags. The band stops at the row **Inset Pieces** left along the outline.
 
-**Next**: the result line below the panel shows the counts of what happened (vertices absorbed, sliver triangles removed, band-width achievement rate, etc.). Check that no spot is reported where the band width came out extremely thin relative to **Width**.
+**Next**: the result line below the panel shows the counts of what happened (faces replaced, new row vertices, band faces, and the seam **desync** count). If **desync is not 0**, the 1:1 seam match is broken — don't move on with it.
 Don't apply Solidify until the very end.
 
-![The Guide Prep panel (1 Flat SK / 2 Folds / 3 Lines / 4 Pieces) next to the pattern pieces laid out flat.](../images/03_prepare_panel.png)
+![The Guide Prep panel next to the pattern pieces laid out flat.](../images/03_prepare_panel.png)
 
-The payoff shows up in 3D. Left is the raw export, right is after **Inset Line** / **Inset Pieces** — the hard crease that ran along the fold line is gone.
+The payoff shows up in 3D. Left is the raw export, right is after **Inset Pieces** / **Inset Line** — the hard crease that ran along the fold line is gone.
 
 ![The shoulder of a CLO export. On the left a sharp ridge runs along the fold line; on the right, after the inset pass, the surface is smooth.](../images/04_inset_before_after.jpg)
 
@@ -101,8 +101,10 @@ easy to never think of, so here it is as a procedure.
 
 1. Select **both** the Retopo and the Mirror, press **Tab**. Both enter Edit Mode.
 2. In the 3D viewport, click a vertex on the Mirror to point at the place you want to fix.
-   The **Selection Link** overlay marks where that vertex sits in the 2D layout, in orange
-   (and the other way round).
+   The **Selection Link** overlay marks where that vertex sits in the 2D layout, in orange.
+   Markers follow the active object's selection only (the one you selected last). Make the Retopo
+   active and it works the other way round (2D → Mirror) — but that direction needs the Guide
+   projection cache, so right after opening a file it shows nothing until **Refresh** has run once.
 3. Edit the **Retopo** in the 2D viewport.
 4. Press **Refresh**: the Mirror catches up without either object leaving Edit Mode.
 
@@ -115,6 +117,8 @@ back). Use it to work on a couple of pattern pieces in a crowded area. It travel
 Retopo → Mirror: hiding on the Mirror alone changes nothing on the Retopo and is undone by the
 next sync. Blender only draws geometry as hidden in Edit Mode, so **a Mirror in Object Mode looks
 the same as always** — the flags are there, and you see them the moment you Tab in.
+**While Subdiv Preview is on, hidden geometry is not synced**: the subdivided Mirror has no vertex
+correspondence with the Retopo.
 
 ![The 3D View panel and the 3D Mirror built from the flat Retopo. `Retopology_AC93DMirror` in the outliner is the object itself.](../images/03_3dview_mirror.png)
 
@@ -126,11 +130,12 @@ Useful mid-work, when you want to see where things need fixing.
 2. **Residual → Bake** — the offset between the Guide's surface and the current Retopo (red = Guide is closer, blue = farther, white = matching, dark gray = not yet covered by the Retopo). Image `AC9_ResidualMap_<Guide name>`.
 3. **Sag → Bake** — the offset from each pattern piece's best-fit plane (white = bulging toward the viewer, black = sinking away, mid-gray = flat). Image `AC9_SagMap_<Guide name>`. The contour lines follow the edge-loop flow of low-frequency sagging.
 4. **Drape → Bake** — Ambient Occlusion times Curvature, baked off the Guide's 3D shape into `AC9_DrapeMap_<Guide name>` (the two passes are deleted once the product exists). Useful as a guide for where to knife-cut in 2D. The scale AO reads at is **Map Settings → AO Distance** (default 30 mm); solid black panels mean it is set too high, because panels sewn flat against each other then occlude one another completely. The composite ratio is **AO Mix** (default 0.7).
-5. Pick which map to view with **Preview**, then press **Plane** to create a 1×1 m plane called `AC9_BakePreview` and switch a Solid viewport to **Solid color = Texture**. The **Retopology overlay** is switched on at the same time.
+5. Pick which map to view with **Preview**, then press **Plane** to create a 1×1 m plane called `AC9_BakePreview` and switch a Solid viewport to **Solid color = Texture**. X-Ray and the **Retopology overlay** are switched back off at the same time.
+6. The plane sits 5 mm below the retopo, so the retopo hides it. **Add Transparent Material** makes the retopo semi-transparent so the map reads through the faces you are cutting; the **Alpha** slider sets how much (default 0.35).
 
 Map images are per Guide, so several garments in one file never overwrite each other's bakes. What the file is carrying, and what it costs, is listed in **Baked Maps** — with buttons to throw any of it away.
 
-**Next**: confirm the map is actually visible. If it isn't, check whether **Solid** is set to **Texture** and whether the **Retopology** overlay is on (the Preview Plane sits 5 mm below the Retopo).
+**Next**: confirm the map is actually visible. If it isn't, check whether **Solid** is set to **Texture** and whether you pressed **Add Transparent Material** (the Preview Plane sits 5 mm below the Retopo).
 Progress is shown only as staged text, since the bake itself (`bpy.ops.object.bake`) doesn't report incremental percentages — that stretch of the process will look stalled.
 
 ![The Guide Maps panel, with the Residual / Sag / Drape bake buttons and the Preview selector.](../images/03_guide_maps_panel.png)

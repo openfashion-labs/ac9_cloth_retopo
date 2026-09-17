@@ -148,11 +148,36 @@ def island_of_boundary(guide, retopo, flat_sk, bm, match_distance=0.0,
     flat_co = anch.get_flat_co(guide, flat_sk)
     islands = anch._vertex_islands(guide)
 
+    # An island too small to be a panel is CLO export debris — a lone
+    # triangle left where two pieces met — and must not be a candidate: it
+    # sits exactly on a real panel's outline, so the outline vertices nearest
+    # to it are captured by the debris and the real panel's ring loses the
+    # edge between them (measured 2026-09-16: a 3-vertex island 1.1 mm across
+    # at the tie's corner took 2 of 36 outline verts, "no closed region from
+    # 35 edges", and the tie was the one panel Preview Fill never filled).
+    # A panel is never smaller than 10 x the match tolerance across.
+    min_extent = tol * 10.0
+    lo, hi = {}, {}
+    for vi, isl in enumerate(islands):
+        co = flat_co[vi]
+        if isl not in lo:
+            lo[isl] = [co.x, co.y]
+            hi[isl] = [co.x, co.y]
+            continue
+        l, h = lo[isl], hi[isl]
+        if co.x < l[0]: l[0] = co.x
+        if co.y < l[1]: l[1] = co.y
+        if co.x > h[0]: h[0] = co.x
+        if co.y > h[1]: h[1] = co.y
+    debris = {isl for isl in lo
+              if max(hi[isl][0] - lo[isl][0], hi[isl][1] - lo[isl][1]) < min_extent}
+
     gbm = bmesh.new()
     gbm.from_mesh(mesh)
     gbm.edges.ensure_lookup_table()
     bedges = [(e.verts[0].index, e.verts[1].index)
-              for e in gbm.edges if e.is_boundary]
+              for e in gbm.edges
+              if e.is_boundary and islands[e.verts[0].index] not in debris]
     gbm.free()
     if not bedges:
         return {}

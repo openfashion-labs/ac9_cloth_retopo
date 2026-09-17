@@ -8,7 +8,7 @@ A Blender add-on for retopologizing garment meshes made in CLO / Marvelous Desig
 The 3D shape is obtained by projecting the flat retopo onto the high-poly Guide using barycentric coordinates. Editing always happens in 2D; 3D is a view-only mirror.
 
 - **Supported Blender**: 5.0 or later (tested on 5.0.1, 5.1.1 and 5.2.1 LTS)
-- **Version**: 1.0.0
+- **Version**: 1.1.0
 - **License**: GPL-3.0-or-later ([LICENSE](LICENSE))
   Copyright (C) 2026 OpenFashion. This program is free software: you can
   redistribute it and/or modify it under the terms of the GNU General Public
@@ -56,7 +56,7 @@ English manual: [docs/en/](docs/en/README.md)
 
 ## Status
 
-v1.0.0.
+v1.1.0.
 Unfinished features only appear once **Experimental tools** is turned on in Add-on
 Preferences (off by default): Grid Regions, Align to Outline, Mesh Edit, Quad Fix,
 Legacy Flip, and the Density family (Density / Even Out / Count / Spacing / Pins /

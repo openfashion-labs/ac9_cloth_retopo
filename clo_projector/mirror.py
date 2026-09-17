@@ -16,16 +16,17 @@ The mirror model fixes both:
   * AC9_3D_Mirror is a separate, plain mesh object positioned on the garment.
     Its geometry is a pure function of (retopo 2D + Guide) — rebuilt from
     scratch every Refresh.  It is a VIEWER: any edit the user makes to it is
-    silently overwritten on the next Refresh.  Only its vertex *selection* is
-    read back (the selection-correspondence overlay).
+    silently overwritten on the next Refresh. Only its vertex *selection* and
+    the Refresh-time ``ac9_src_2d`` snapshot are read back by the
+    selection-correspondence overlay.
 
 Topology correspondence
 -----------------------
-The mirror mesh is built as a 1:1 copy of the retopo's topology (same vertex
-indexing and faces), so mirror.vertices[i] always corresponds to
-retopo.vertices[i].  This is what makes selection correspondence and per-vertex
-mapping trivial.  When the retopo's vert/face count changes, the mirror mesh is
-rebuilt.
+The ordinary mirror mesh is a 1:1 copy of the retopo topology. A reversible
+subdivision preview is the explicit exception: original vertices keep their
+indices and subdivided children follow them, while ``ac9_preview_levels`` on
+the Mirror mesh records that state. The 2D->3D selection overlay is geometric
+and therefore does not depend on either topology.
 
 Two refresh paths
 -----------------
@@ -46,7 +47,7 @@ import bpy
 
 from . import core
 from .core import ProjectionResult
-from .guide import extract_points_world, validate_guide
+from .guide import extract_points_world, get_basis_local, validate_guide
 
 try:
     import numpy as _np
@@ -60,6 +61,37 @@ except ImportError:
 # refresh, so a rename of the retopo is healed the next time Refresh is pressed.
 MIRROR_PROP = "ac9_mirror_of"
 MIRROR_SUFFIX = "_AC93DMirror"
+PREVIEW_LEVELS_PROP = "ac9_preview_levels"
+PREVIEW_DIRTY_PROP = "ac9_preview_dirty"
+SRC_2D_ATTR = "ac9_src_2d"
+SRC_2D_VALID_ATTR = "ac9_src_2d_valid"
+SRC_2D_COUNT_PROP = "ac9_src_2d_count"
+
+
+def preview_levels(mirror) -> int:
+    """Explicit preview state; topology counts are deliberately irrelevant."""
+    if mirror is None or mirror.type != "MESH":
+        return 0
+    return max(0, int(mirror.data.get(PREVIEW_LEVELS_PROP, 0)))
+
+
+def preview_is_dirty(mirror) -> bool:
+    return bool(mirror is not None and mirror.type == "MESH"
+                and mirror.data.get(PREVIEW_DIRTY_PROP, False))
+
+
+def mark_preview_dirty(retopo) -> bool:
+    """Mark an existing subdiv preview stale. Return whether state changed."""
+    mirror = find_mirror(retopo)
+    if preview_levels(mirror) <= 0 or preview_is_dirty(mirror):
+        return False
+    mirror.data[PREVIEW_DIRTY_PROP] = True
+    return True
+
+
+def _set_preview_state(mirror, levels=0, dirty=False):
+    mirror.data[PREVIEW_LEVELS_PROP] = max(0, int(levels))
+    mirror.data[PREVIEW_DIRTY_PROP] = bool(dirty) if levels else False
 
 
 def find_mirror(retopo):
@@ -166,6 +198,60 @@ def _write_coords_local(mirror, local_coords):
     # loop_triangles=True is required after any vertex write so the C-side
     # cache stays valid — see reference_bmesh_update_edit_mesh_crash.
     mirror.data.update()
+
+
+def _write_src2d_mesh(mirror, local_2d):
+    """Write each Mirror vertex's generating Retopo-local 2D coordinate."""
+    mesh = mirror.data
+    attr = mesh.attributes.get(SRC_2D_ATTR)
+    if attr is not None and (attr.data_type != "FLOAT_VECTOR"
+                             or attr.domain != "POINT"):
+        mesh.attributes.remove(attr)
+        attr = None
+    if attr is None:
+        attr = mesh.attributes.new(SRC_2D_ATTR, "FLOAT_VECTOR", "POINT")
+    n = len(mesh.vertices)
+    if len(local_2d) != n:
+        raise ValueError(
+            f"{SRC_2D_ATTR}: {len(local_2d)} source points for {n} vertices"
+        )
+    if _HAS_NUMPY:
+        values = _np.empty(n * 3, dtype=_np.float32)
+        for index, co in enumerate(local_2d):
+            values[3 * index:3 * index + 3] = (co.x, co.y, co.z)
+        attr.data.foreach_set("vector", values)
+    else:
+        for item, co in zip(attr.data, local_2d):
+            item.vector = co
+
+    valid = mesh.attributes.get(SRC_2D_VALID_ATTR)
+    if valid is not None and (valid.data_type != "INT"
+                              or valid.domain != "POINT"):
+        mesh.attributes.remove(valid)
+        valid = None
+    if valid is None:
+        valid = mesh.attributes.new(SRC_2D_VALID_ATTR, "INT", "POINT")
+    valid.data.foreach_set("value", [1] * n)
+    mesh[SRC_2D_COUNT_PROP] = n
+    mesh.update()
+
+
+def _write_src2d_bmesh(bm, local_2d):
+    """Edit-BMesh counterpart of :func:`_write_src2d_mesh`."""
+    if len(local_2d) != len(bm.verts):
+        raise ValueError(
+            f"{SRC_2D_ATTR}: {len(local_2d)} source points for "
+            f"{len(bm.verts)} edit vertices"
+        )
+    layer = bm.verts.layers.float_vector.get(SRC_2D_ATTR)
+    if layer is None:
+        layer = bm.verts.layers.float_vector.new(SRC_2D_ATTR)
+    valid_layer = bm.verts.layers.int.get(SRC_2D_VALID_ATTR)
+    if valid_layer is None:
+        valid_layer = bm.verts.layers.int.new(SRC_2D_VALID_ATTR)
+    for vert, co in zip(bm.verts, local_2d):
+        vert[layer] = co
+        vert[valid_layer] = 1
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +421,11 @@ def sync_hidden(retopo, mirror=None):
         mirror = find_mirror(retopo)
     if mirror is None:
         return False
+    # A subdiv preview has child topology with no parent-face mapping in v1.
+    # Copying only index-compatible vertex flags would create the invalid
+    # half-hidden state called out by the design review, so skip all domains.
+    if preview_levels(mirror) > 0:
+        return False
 
     hidden = _read_hidden(retopo)
     if mirror.mode != "EDIT":
@@ -356,7 +447,8 @@ def sync_hidden(retopo, mirror=None):
 # ---------------------------------------------------------------------------
 
 
-def refresh_mirror(context, retopo, guide_obj, flat_sk, progress=None):
+def refresh_mirror(context, retopo, guide_obj, flat_sk, progress=None,
+                   preview_levels_override=None):
     """Recompute the forward projection on *retopo*, then rebuild the mirror to
     match.  Returns (ProjectionResult, mirror_obj | None).  Object Mode only.
 
@@ -381,17 +473,52 @@ def refresh_mirror(context, retopo, guide_obj, flat_sk, progress=None):
     if not result.success:
         return result, None
 
-    n = len(retopo.data.vertices)
-    faces = [tuple(p.vertices) for p in retopo.data.polygons]
-    mirror = _ensure_mirror_topology(context, retopo, n, faces)
+    old_mirror = find_mirror(retopo)
+    levels = (preview_levels(old_mirror) if preview_levels_override is None
+              else max(0, int(preview_levels_override)))
 
-    # Copy the retopo's AC9_3D_Project ShapeKey (local coords) into the mirror.
-    # Mirror shares the retopo's world matrix, so these reproduce the garment
-    # world positions.
-    sk = retopo.data.shape_keys.key_blocks[core.SHAPEKEY_NAME]
-    _write_coords_local(mirror, [sk.data[i].co.copy() for i in range(n)])
-    _apply_hidden_mesh(mirror, _read_hidden(retopo))
-    return result, mirror
+    if levels <= 0:
+        n = len(retopo.data.vertices)
+        faces = [tuple(p.vertices) for p in retopo.data.polygons]
+        mirror = _ensure_mirror_topology(context, retopo, n, faces)
+        sk = retopo.data.shape_keys.key_blocks[core.SHAPEKEY_NAME]
+        _write_coords_local(mirror, [sk.data[i].co.copy() for i in range(n)])
+        _write_src2d_mesh(mirror, get_basis_local(retopo))
+        _set_preview_state(mirror, 0)
+        _apply_hidden_mesh(mirror, _read_hidden(retopo))
+        return result, mirror
+
+    # Preview uses a disposable full copy and the exact destructive pipeline.
+    # No mesh/cache survives this call except the one ordinary Mirror mesh.
+    tmp_obj = retopo.copy()
+    tmp_mesh = retopo.data.copy()
+    tmp_obj.data = tmp_mesh
+    tmp_obj.name = "AC9_SubdivPreview_Temp"
+    tmp_mesh.name = "AC9_SubdivPreview_Temp"
+    collection = (retopo.users_collection[0] if retopo.users_collection
+                  else context.scene.collection)
+    collection.objects.link(tmp_obj)
+    try:
+        from .operators import subdivide_and_project
+        preview_result, _n_old, n_new, _snapped = subdivide_and_project(
+            context, tmp_obj, guide_obj, flat_sk,
+            levels=levels, snap_boundary=True, snap_distance=0.02,
+        )
+        if not preview_result.success:
+            return preview_result, old_mirror
+        faces = [tuple(p.vertices) for p in tmp_mesh.polygons]
+        mirror = _ensure_mirror_topology(context, retopo, n_new, faces)
+        sk = tmp_mesh.shape_keys.key_blocks[core.SHAPEKEY_NAME]
+        _write_coords_local(mirror, [sk.data[i].co.copy() for i in range(n_new)])
+        _write_src2d_mesh(mirror, get_basis_local(tmp_obj))
+        _set_preview_state(mirror, levels)
+        # Hidden propagation is intentionally skipped for preview topology.
+        return preview_result, mirror
+    finally:
+        if tmp_obj.name in bpy.data.objects:
+            bpy.data.objects.remove(tmp_obj, do_unlink=True)
+        if tmp_mesh.name in bpy.data.meshes and tmp_mesh.users == 0:
+            bpy.data.meshes.remove(tmp_mesh)
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +545,7 @@ def _read_retopo_geometry(retopo):
     return points_world, faces
 
 
-def _write_mirror_editmode(mirror, new_world, faces, hidden):
+def _write_mirror_editmode(mirror, new_world, src2d_local, faces, hidden):
     """Write 3D coords (and topology) into the mirror while it is itself in
     Edit Mode.
 
@@ -448,6 +575,8 @@ def _write_mirror_editmode(mirror, new_world, faces, hidden):
     if topo_same:
         for i in range(n):
             bm.verts[i].co = inv @ new_world[i]
+        _write_src2d_bmesh(bm, src2d_local)
+        mirror.data[SRC_2D_COUNT_PROP] = n
         _apply_hidden_bmesh(bm, hidden)
         # Recompute normals: moving every vert from the flat layout onto the 3D
         # surface leaves the cached edit-mode normals stale, so the mirror draws
@@ -468,12 +597,15 @@ def _write_mirror_editmode(mirror, new_world, faces, hidden):
         except (ValueError, IndexError):
             # Duplicate/degenerate face — skip it rather than abort the refresh.
             pass
+    _write_src2d_bmesh(bm, src2d_local)
+    mirror.data[SRC_2D_COUNT_PROP] = n
     _apply_hidden_bmesh(bm, hidden)
     bm.normal_update()
     bmesh.update_edit_mesh(mirror.data, loop_triangles=True, destructive=True)
 
 
-def refresh_mirror_editmode(context, retopo, guide_obj, flat_sk, progress=None):
+def refresh_mirror_editmode(context, retopo, guide_obj, flat_sk, progress=None,
+                            preview_levels_override=None):
     """Refresh while one or both of {retopo, mirror} are in Edit Mode — the
     "both in Edit Mode" flow: click on the 3D mirror, edit on the 2D retopo,
     press Refresh, all without ever leaving Edit Mode.
@@ -498,20 +630,81 @@ def refresh_mirror_editmode(context, retopo, guide_obj, flat_sk, progress=None):
     if n == 0:
         return ProjectionResult(success=False, error="Retopo has no vertices."), None
 
+    old_mirror = find_mirror(retopo)
+    levels = (preview_levels(old_mirror) if preview_levels_override is None
+              else max(0, int(preview_levels_override)))
+
+    # A preview is a pure function of the LIVE 2D edit mesh.  Build a
+    # disposable object from that bmesh snapshot, run the same production
+    # Subdivide pipeline as Commit, then write only the Mirror.  The helper
+    # briefly leaves and restores Edit Mode because bpy.ops.mesh.subdivide
+    # requires an active edit object; the authoritative Retopo is never
+    # subdivided or otherwise rewritten by this path.
+    if levels > 0:
+        tmp_mesh = bpy.data.meshes.new("AC9_SubdivPreview_Temp")
+        tmp_obj = bpy.data.objects.new("AC9_SubdivPreview_Temp", tmp_mesh)
+        collection = (retopo.users_collection[0] if retopo.users_collection
+                      else context.scene.collection)
+        collection.objects.link(tmp_obj)
+        tmp_obj.matrix_world = retopo.matrix_world.copy()
+        try:
+            source_inv = retopo.matrix_world.inverted()
+            tmp_mesh.from_pydata(
+                [source_inv @ point for point in points_world], [], faces)
+            tmp_mesh.update()
+
+            from .operators import subdivide_and_project
+            preview_result, _n_old, n_new, _snapped = subdivide_and_project(
+                context, tmp_obj, guide_obj, flat_sk,
+                levels=levels, snap_boundary=True, snap_distance=0.02,
+                progress=progress,
+            )
+            if not preview_result.success:
+                return preview_result, old_mirror
+
+            preview_faces = [tuple(p.vertices) for p in tmp_mesh.polygons]
+            shape = tmp_mesh.shape_keys.key_blocks[core.SHAPEKEY_NAME]
+            preview_world = [tmp_obj.matrix_world @ shape.data[i].co
+                             for i in range(n_new)]
+            src2d_local = get_basis_local(tmp_obj)
+            mirror = find_mirror(retopo)
+            if mirror is not None and mirror.mode == "EDIT":
+                _write_mirror_editmode(
+                    mirror, preview_world, src2d_local, preview_faces, None)
+            else:
+                mirror = _ensure_mirror_topology(
+                    context, retopo, n_new, preview_faces)
+                inv = mirror.matrix_world.inverted()
+                _write_coords_local(mirror, [inv @ p for p in preview_world])
+                _write_src2d_mesh(mirror, src2d_local)
+            _set_preview_state(mirror, levels)
+            return preview_result, mirror
+        finally:
+            if tmp_obj.name in bpy.data.objects:
+                bpy.data.objects.remove(tmp_obj, do_unlink=True)
+            if tmp_mesh.name in bpy.data.meshes and tmp_mesh.users == 0:
+                bpy.data.meshes.remove(tmp_mesh)
+
     new_world, attachments, failed = core.compute_forward_world(
         points_world, guide_obj, flat_sk, progress=progress
     )
     failed_indices = tuple(i for i, a in enumerate(attachments) if not a.is_ok)
 
     hidden = _read_hidden(retopo)
-    mirror = find_mirror(retopo)
+    retopo_inv = retopo.matrix_world.inverted()
+    src2d_local = [retopo_inv @ point for point in points_world]
+    mirror = old_mirror
     if mirror is not None and mirror.mode == "EDIT":
-        _write_mirror_editmode(mirror, new_world, faces, hidden)
+        _write_mirror_editmode(mirror, new_world, src2d_local, faces, hidden)
     else:
         mirror = _ensure_mirror_topology(context, retopo, n, faces)
         inv = mirror.matrix_world.inverted()
         _write_coords_local(mirror, [inv @ p for p in new_world])
+        _write_src2d_mesh(mirror, src2d_local)
         _apply_hidden_mesh(mirror, hidden)
+
+    # The ordinary (non-preview) Mirror is explicitly recorded as base state.
+    _set_preview_state(mirror, 0)
 
     return (
         ProjectionResult(
@@ -539,6 +732,8 @@ def mirror_has_unsynced_edits(retopo, guide_obj, flat_sk, tolerance=1e-5) -> boo
     """
     mirror = find_mirror(retopo)
     if mirror is None:
+        return False
+    if preview_levels(mirror) > 0:
         return False
     n = len(retopo.data.vertices)
     if len(mirror.data.vertices) != n:

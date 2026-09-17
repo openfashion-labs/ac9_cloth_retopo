@@ -28,6 +28,7 @@ _OPERATOR_CLASSES = (
     operators.AC9_OT_ClearAttachments,
     operators.AC9_OT_BakeIslandColors,
     operators.AC9_OT_ClearIslandColors,
+    operators.AC9_OT_ToggleSubdivPreview,
     operators.AC9_OT_SubdivideRetopo,
     operators.AC9_OT_SetViewState,
     operators.AC9_OT_ToggleWireframe,

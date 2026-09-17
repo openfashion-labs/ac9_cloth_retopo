@@ -4,13 +4,20 @@ so every function can be tested headless on a bmesh.
 The workflow is three steps, done on a bmesh holding a planar shape key (the
 UV layout as geometry, see FlatSession below):
 
-inset_pieces          per pattern piece: absorb + inset_region a parallel row
 tag_creases_by_angle  tag edges by dihedral angle (fold lines)
-inset_line            inset a tagged internal fold line to both sides
+inset_pieces          per pattern piece: a TRUE 2D offset of the outline
+inset_line            inset a fold line (a set of edges) to both sides
+
+Both insets work the same way, on the flat shape: shapely offsets the region
+(`buffer(-W, mitre)` for a piece, the two offset curves of a line for a
+band), the original faces that fall inside are deleted, and the ring between
+the old boundary and the new row is re-triangulated with shapely's
+constrained Delaunay. NOTHING is welded, so every outline vertex survives by
+construction and the sewn 1:1 seam pairs cannot drift apart.
 
 repair_fold_lines, tag_edges and the small tracking helpers below them are
-kept because inset_line calls them internally (and tag_edges lets the panel's
-Selected -> Crease / Untag buttons mark or clear a line by hand).
+kept for the panel's Selected -> Crease / Untag buttons and for callers that
+want to rebuild a broken fold line by hand; the insets no longer call them.
 """
 
 import heapq
@@ -18,6 +25,7 @@ import math
 from collections import Counter
 
 import bmesh
+import numpy as np
 from mathutils import Vector, kdtree
 from mathutils.bvhtree import BVHTree
 from mathutils.geometry import barycentric_transform
@@ -33,24 +41,59 @@ KIND_CREASE = 2    # rim edge or fold: gets rounded
 # including a line 0.35 mm beside the lapel crease).
 ROW_LAYER = "ac9_inset_row"
 PIECE_LAYER = "ac9_flat_piece"   # vertex INT, temporary during a FlatSession
+# Face INT attribute: 1 on the faces an Inset Line band is made of. A later
+# Inset Pieces keeps those faces (they are the fold's own geometry) and
+# builds its strip around them, so the two steps commute.
+BAND_LAYER = "ac9_inset_band"
 
-# Inset absorbs everything closer than this multiple of the width, not just
-# closer than the width itself. A garment drawn with the parallel-line trick
-# already carries an internal line at exactly the width the user then insets
-# by, and that line's vertices scatter a little to both sides of it: with an
-# exact cut half of them are collapsed and half are left standing right where
-# the new row lands, which tears the strip. The margin puts the whole line on
-# one side of the cut. Measured on a jacket export whose line sits at 1.00 mm:
-# the distance histogram has 2202 vertices in 0.95-1.05 and a clear valley at
-# 1.25-1.35, so a quarter of the width is both enough and not greedy (the next
-# internal line was at 2.00 mm).
+# Inset deletes every original face closer than this multiple of the width to
+# the outline, not just closer than the width itself. A garment drawn with the
+# parallel-line trick already carries an internal line at exactly the width the
+# user then insets by, and that line's vertices scatter a little to both sides
+# of it: with an exact cut half of them are inside the new row and half are
+# left standing right where it lands, which tears the strip. The margin puts
+# the whole line on one side of the cut. Measured on a jacket export whose line
+# sits at 1.00 mm: the distance histogram has 2202 vertices in 0.95-1.05 and a
+# clear valley at 1.25-1.35, so a quarter of the width is both enough and not
+# greedy (the next internal line was at 2.00 mm).
 ABSORB_MARGIN = 1.25
 
-# A triangle whose height over its longest edge is below this fraction of the
-# width is a needle left over from the absorb, not cloth. Measured: the needles
-# are 0.009 mm high for a 1 mm width, the thinnest real triangle in the same
-# neighbourhood 0.77 mm, so anything in between separates them.
-SLIVER_ALTITUDE = 0.05
+# A convex corner sharper than this is bevelled by the offset instead of being
+# mitred out to infinity (the even offset shoots out 49 mm for a 1 mm inset at
+# an acute tip).
+MITRE_LIMIT = 2.5
+
+# Coordinate key rounding, in metres: 1 nm. Keys are only ever built from the
+# DOUBLE coordinate a vertex was created at, never from v.co, so they stay
+# exact -- see F32_TOL.
+KEY_DIGITS = 9
+
+# BMVert.co is float32: a test of a mesh vertex position against a shapely
+# geometry must allow for that. Measured error 1.2e-8 .. 2.3e-8 m at metre
+# magnitudes, so 1e-9 comparisons fail on every single vertex.
+F32_TOL = 2e-7
+
+
+class ShapelyMissing(RuntimeError):
+    """Raised when shapely can't be imported - surfaced to the user in the UI."""
+
+
+def require_shapely():
+    """The shapely module, or ShapelyMissing. Same shape as
+    uv_seam_guide.preview_fill._require_shapely: the wheel ships with the
+    add-on, so this only fires on a hand-assembled install."""
+    try:
+        import shapely
+        from shapely.geometry import Polygon, LineString, Point  # noqa: F401
+        from shapely.prepared import prep  # noqa: F401
+        return shapely
+    except Exception as exc:  # pragma: no cover - environment dependent
+        raise ShapelyMissing(
+            "shapely is required for Inset Pieces / Inset Line but could not "
+            "be imported. Reinstall the add-on from its release ZIP (the "
+            "wheel ships with it), or install it into Blender's Python:\n"
+            "  <blender>/python/bin/python -m pip install shapely"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +197,13 @@ def row_layer(bm, create=True):
     lay = bm.edges.layers.int.get(ROW_LAYER)
     if lay is None and create:
         lay = bm.edges.layers.int.new(ROW_LAYER)
+    return lay
+
+
+def band_layer(bm, create=True):
+    lay = bm.faces.layers.int.get(BAND_LAYER)
+    if lay is None and create:
+        lay = bm.faces.layers.int.new(BAND_LAYER)
     return lay
 
 
@@ -398,15 +448,14 @@ class FlatSession:
             # Which original piece this component is: the MAJORITY stamp of
             # its original vertices (flat position coinciding with a vertex
             # of the stamped piece), applied to every vertex of the
-            # component. The per-vertex stamp alone is not safe: inset_region
-            # (use_interpolate) interpolates the new row vertex's data across
-            # the face it offsets, and on an n-gon with a collinear outline
-            # vertex — the needles _flip_outline_slivers merges away leave
-            # exactly those — the weights blow up and the vertex gets garbage
-            # (measured 2026-09-05 on a 4-piece skirt: stamp 4, basis layer
-            # (-459, 535, -325); mapped nowhere, it kept that basis and flew
-            # 5 km). A component never spans two original pieces — the insets
-            # split pieces, they never join them — so the vote is exact.
+            # component. The per-vertex stamp alone is not safe: a vertex
+            # that maps nowhere keeps whatever its own stamp says, and a
+            # wrong stamp then sends it off the garment (measured
+            # 2026-09-05 on a 4-piece skirt, with the old absorb-and-weld
+            # inset: stamp 4, basis layer (-459, 535, -325); mapped
+            # nowhere, it kept that basis and flew 5 km). A component
+            # never spans two original pieces — the insets split pieces,
+            # they never join them — so the vote is exact.
             votes = Counter()
             for v in verts:
                 k = v[self.player]
@@ -505,7 +554,7 @@ class FlatSession:
 
 
 # ---------------------------------------------------------------------------
-# 1. inset pieces (per pattern piece: the pieces are still loose parts, so
+# 2. inset pieces (per pattern piece: the pieces are still loose parts, so
 #    every outline edge, seam or free edge alike, is a boundary edge)
 
 def _pieces(bm):
@@ -530,74 +579,122 @@ def _pieces(bm):
     return parts
 
 
-def _keeps_orientation(v, target):
-    """True when moving `v` onto `target` flips none of v's faces (the faces
-    that contain `target` collapse and are fine). In 2D this is the test that
-    a triangle is not turned inside out; welding onto the nearest outline
-    vertex without it inverted 64 strip triangles on a jacket (measured), the
-    overlaps that then read as shading defects along a straight outline."""
-    for f in v.link_faces:
-        if target in f.verts:
+def _edge_components(edges):
+    """Connected components of a set of edges (a fold line each)."""
+    adj = {}
+    for e in edges:
+        for v in e.verts:
+            adj.setdefault(v, []).append(e)
+    seen = set()
+    comps = []
+    for e0 in edges:
+        if e0 in seen:
             continue
-        cos = [target.co if x is v else x.co for x in f.verts]
-        n = Vector()
-        for i in range(len(cos)):
-            n += cos[i].cross(cos[(i + 1) % len(cos)])
-        if n.dot(f.normal) <= 0.0:
-            return False
-    return True
+        stack = [e0]
+        seen.add(e0)
+        comp = []
+        while stack:
+            e = stack.pop()
+            comp.append(e)
+            for v in e.verts:
+                for x in adj[v]:
+                    if x not in seen:
+                        seen.add(x)
+                        stack.append(x)
+        comps.append(comp)
+    return comps
 
 
-def _collapse_target(v, candidates):
-    """The nearest of `candidates` that `v` can be welded onto without
-    flipping a face, or None (dissolve it instead)."""
-    for c in sorted(candidates, key=lambda c: (c.co - v.co).length):
-        if _keeps_orientation(v, c):
-            return c
-    return None
+def _key(x, y):
+    """Coordinate key for a flat position. Only ever built from the DOUBLE
+    coordinate a vertex was created at, never from v.co (float32)."""
+    return (round(x, KEY_DIGITS), round(y, KEY_DIGITS))
 
 
-def _flip_outline_slivers(bm, faces=None, max_passes=3):
-    """A triangle whose three vertices are consecutive outline vertices (two
-    of its edges are boundary) is what the absorb leaves where two vertices
-    were welded onto two neighbouring outline vertices. It is a thin sliver
-    between the outline arc and its chord, on either side of the chord — too
-    tall for _collapse_slivers when the outline curves (sagitta 0.05-0.5 mm
-    measured), and inset_region then offsets that sliver's inner copy a full
-    Width inward, past its own chord: the strip folds over and its row runs
-    outside the piece (64 inverted strip triangles on a jacket). The chord
-    edge is dissolved, which merges the sliver into the face beyond: the
-    outline is untouched and the merged face is wide enough to inset.
-    (Flipping the chord instead was tried: with the sliver on the wrong side
-    of the chord the flipped triangles fold, and the winding cases were
-    error-prone. Merging never inverts anything.) Returns the merge count."""
-    total = 0
-    for _ in range(max_passes):
-        merge = []
-        pool = bm.faces if faces is None else [f for f in faces if f.is_valid]
-        for f in pool:
-            if len(f.verts) != 3:
-                continue
-            bnd = [e for e in f.edges if e.is_boundary]
-            if len(bnd) != 2:
-                continue
-            chord = next(e for e in f.edges if not e.is_boundary)
-            if len(chord.link_faces) == 2:
-                merge.append(chord)
-        if not merge:
-            break
-        seen = set()
-        edges = []
-        for e in merge:
-            fs = tuple(e.link_faces)
-            if any(x in seen for x in fs):
-                continue
-            seen.update(fs)
-            edges.append(e)
-        bmesh.ops.dissolve_edges(bm, edges=edges, use_verts=False)
-        total += len(edges)
-        faces = None
-    return total
+def _signed_area(coords):
+    a = 0.0
+    n = len(coords)
+    for i in range(n):
+        x1, y1 = coords[i]
+        x2, y2 = coords[(i + 1) % n]
+        a += x1 * y2 - x2 * y1
+    return 0.5 * a
+
+
+def _loops(edges):
+    """Closed vertex loops of a set of edges that form simple cycles.
+    Returns [(verts, closed_ok)]."""
+    adj = {}
+    for e in edges:
+        for v in e.verts:
+            adj.setdefault(v, []).append(e)
+    seen = set()
+    loops = []
+    for e0 in edges:
+        if e0 in seen:
+            continue
+        loop = []
+        e = e0
+        v = e.verts[0]
+        ok = True
+        for _ in range(len(edges) + 1):
+            seen.add(e)
+            loop.append(v)
+            v = e.other_vert(v)
+            nxt = [x for x in adj[v] if x is not e]
+            if len(nxt) != 1:
+                ok = False
+                break
+            e = nxt[0]
+            if e is e0:
+                break
+            if e in seen:
+                ok = False
+                break
+        loops.append((loop, ok))
+    return loops
+
+
+def _polygon_from_loops(loops):
+    """Polygon with the largest loop as shell and the others as holes, from
+    the output of _loops (v.co must hold the flat shape)."""
+    from shapely.geometry import Polygon
+
+    rings = []
+    for verts, ok in loops:
+        if not ok or len(verts) < 3:
+            continue
+        cs = [(v.co.x, v.co.y) for v in verts]
+        rings.append((abs(_signed_area(cs)), cs))
+    if not rings:
+        return None
+    rings.sort(key=lambda r: r[0], reverse=True)
+    return Polygon(rings[0][1], [r[1] for r in rings[1:]])
+
+
+def _polys(geom):
+    """Every Polygon inside a shapely geometry, flattened."""
+    from shapely.geometry import Polygon, MultiPolygon, GeometryCollection
+
+    if geom is None or geom.is_empty:
+        return []
+    if isinstance(geom, Polygon):
+        return [geom]
+    if isinstance(geom, (MultiPolygon, GeometryCollection)):
+        out = []
+        for g in geom.geoms:
+            out.extend(_polys(g))
+        return out
+    return []
+
+
+def _ring_coords(poly):
+    """All rings (exterior + interiors) of a polygon as coordinate lists,
+    without the closing duplicate."""
+    rings = [list(poly.exterior.coords)[:-1]]
+    for r in poly.interiors:
+        rings.append(list(r.coords)[:-1])
+    return rings
 
 
 def _seam_key(v, basis_layer):
@@ -678,7 +775,7 @@ def count_seam_desync(bm, basis_layer=None):
 # because both bounds of the usable band scale with the edge length:
 #
 #   lower bound  the deviation we MUST cover. The welded-away apex sat within
-#               SLIVER_ALTITUDE * width (0.05 mm) of its chord in the FLAT
+#               5 % of the width (0.05 mm) of its chord in the FLAT
 #               layout, but in 3D the surface curves: 0.25-0.62 mm measured on
 #               the 4 edges a 0.25 mm band still missed (jacket, 2026-09-07)
 #               = 0.13-0.32 x the boundary edge there (1.96 mm).
@@ -878,11 +975,19 @@ def _on_segment_walk(starts, Pa, Pb, adj, coincident, exclude, P, key, max_steps
 def resync_seams(bm, basis_layer=None, flat_layer=None, max_steps=8, max_passes=3,
                  active_layer=None, tol=None):
     """Repair seam pairs left desynced by an inset (see
-    DESIGN_seam_twin_sync_2026-09-07.md): _collapse_slivers welds an outline
-    apex away, and its 3D twin on the seam's other side is left with one
-    vertex too many for the 1:1 match the rest of the addon assumes — a
-    boundary edge whose sorted endpoint-key pair no other boundary edge
-    shares, exactly what count_seam_desync flags. This splits the coarser
+    DESIGN_seam_twin_sync_2026-09-07.md).
+
+    SAFETY NET since 2026-09-12: the 2D-offset insets weld nothing, so no
+    outline vertex is lost and this should find nothing to do (measured: 0
+    splits on a jacket and on a coarse export). It stays because it is the
+    census that PROVES that, and because a Guide can arrive already
+    desynced from an older run.
+
+    The failure it repairs: an inset welds an outline apex away, and its 3D
+    twin on the seam's other side is left with one vertex too many for the
+    1:1 match the rest of the addon assumes — a boundary edge whose sorted
+    endpoint-key pair no other boundary edge shares, exactly what
+    count_seam_desync flags. This splits the coarser
     side's edge to match, using the finer side's OWN vertex positions as the
     new points; it never deletes or moves a face (the adjacent strip face
     just gains a vertex and becomes an n-gon -- which is why the faces the
@@ -890,12 +995,11 @@ def resync_seams(bm, basis_layer=None, flat_layer=None, max_steps=8, max_passes=
     read as triangles by the projector, and a quad left here reached the
     user as "Guide polygon N has 4 vertices", 96 of them on a shirt).
 
-    Call this AFTER the bmesh is back in the Basis / 3D frame — a
-    FlatSession's `end()` for a flat-mode inset, or straight after an
-    _inset_pieces / _inset_line_body call in 3D mode. Mid-edit, on the flat
-    shape, a new vertex's 3D position has not been barycentric-mapped back
-    yet, so its twin key would not match the key _collapse_slivers itself
-    used — see the module's design note.
+    Call this AFTER the bmesh is back in the Basis / 3D frame — that is,
+    after the FlatSession's `end()`. Mid-edit, on the flat shape, a new
+    vertex's 3D position has not been barycentric-mapped back yet, so its
+    twin key would not match the one the seam census uses — see the
+    module's design note.
 
     `basis_layer`, `flat_layer`: see _seam_key / FlatSession. `flat_layer` is
     optional: pass it whenever the caller also tracks a flat/UV shape key, so
@@ -1079,249 +1183,6 @@ def resync_seams(bm, basis_layer=None, flat_layer=None, max_steps=8, max_passes=
             'nonfinite': final.get('nonfinite', 0)}
 
 
-def _collapse_slivers(bm, min_altitude, max_passes=3, faces=None):
-    """Collapse the needle triangles the absorb leaves behind.
-
-    `faces`: restrict the search to these faces (default: the whole mesh).
-
-    Collapsing an interior vertex onto its nearest outline vertex turns a
-    triangle that spanned two outline vertices into a triangle of three
-    consecutive outline vertices: nearly collinear, area next to zero (0.018
-    against a 1.0 median measured on a jacket export, altitude 0.009 mm). Its
-    normal is arbitrary, and inset_region averages the face normals of a
-    vertex's fan into the direction it offsets that vertex, so the new row
-    dips off the surface right there (0.68 mm measured) — the dents along an
-    outline.
-
-    The middle vertex of such a needle is welded onto the nearer end of the
-    long edge, which removes the face and closes the outline over it (the
-    long edge is already there).
-
-    This DOES remove outline vertices (measured on a legwear export: 135 of
-    2946), and every outline vertex is one half of a sewn pair, so the
-    partner on the other piece is left unmatched. Skipping outline apexes
-    instead was tried (2026-09-05): the needles then stay for
-    _flip_outline_slivers to merge, and on a jacket export that shredded the
-    mesh (18 pieces -> 83, flown vertices 2 -> 5). So the weld stays, and the
-    seam analysis absorbs the lone unmatched vertex instead — see
-    uv_seam_guide.anchor_segments.find_anchors, which no longer reads an
-    isolated partnerless vertex inside a seam as a seam end.
-
-    Returns the number of vertices welded away."""
-    total = 0
-    for _ in range(max_passes):
-        targetmap = {}
-        pool = bm.faces if faces is None else [f for f in faces if f.is_valid]
-        for f in pool:
-            if len(f.verts) != 3:
-                continue
-            e_long = max(f.edges, key=lambda e: e.calc_length())
-            ln = e_long.calc_length()
-            if ln < 1e-12:
-                continue
-            if 2.0 * f.calc_area() / ln >= min_altitude:
-                continue
-            apex = next((v for v in f.verts if v not in e_long.verts), None)
-            if apex is None:
-                continue
-            # an outline vertex may only merge into the outline: welding it
-            # onto an interior vertex bends the outline inward, and the inset
-            # row then runs OUTSIDE the piece there (64 inverted strip faces
-            # on a jacket, all along straight outline; measured)
-            cands = [x for x in e_long.verts if x.is_boundary or not apex.is_boundary]
-            tgt = _collapse_target(apex, cands) if cands else None
-            if tgt is not None and tgt is not apex:
-                targetmap.setdefault(apex, tgt)
-        # a vertex that is itself being welded away cannot be a target
-        targetmap = {v: t for v, t in targetmap.items() if t not in targetmap}
-        if not targetmap:
-            break
-        bmesh.ops.weld_verts(bm, targetmap=targetmap)
-        total += len(targetmap)
-    return total
-
-
-# The corner row vertex is pushed at most this many widths in, and rows are
-# merged into it over at most this many widths along the edge. 4 W made a fan
-# of 13 long thin triangles at the shoulder point of a back piece (dense
-# outline, very acute); 2.5 W is the compromise between that and the fold-over.
-CORNER_MAX = 2.5
-SLIT_FIX = False   # see _fix_slits; off until it is verified on real data
-CORNER_ANGLE = math.radians(100.0)   # convex corners sharper than this are treated
-
-
-def _sharp_corners(bm, bverts, width):
-    """({outline vertex: (reach, along)}, {outline vertex: axis}) for the
-    sharp corners of a piece.
-
-    The first dict is the convex corners: `reach` = where the two offset
-    lines meet, width / sin(alpha/2), capped at CORNER_MAX widths; `along` =
-    how far along each edge from the corner an outline vertex's own row
-    point would fall beyond the other edge's offset line, width /
-    tan(alpha/2).
-
-    The second dict is the concave corners (a dart / slit tip): `axis` is
-    the unit bisector of the two boundary edges, pointing toward the
-    pattern's outside (the slit's open side) — the tip's own row vertex
-    lies roughly `width` the other way, into the fabric."""
-    out = {}
-    slits = {}
-    for b in bverts:
-        nb = [e.other_vert(b) for e in b.link_edges if e.is_boundary]
-        if len(nb) != 2 or not b.link_faces:
-            continue
-        e1 = nb[0].co - b.co
-        e2 = nb[1].co - b.co
-        if e1.length < 1e-12 or e2.length < 1e-12:
-            continue
-        e1.normalize()
-        e2.normalize()
-        ang = e1.angle(e2)
-        if ang >= CORNER_ANGLE:
-            continue
-        inward = Vector()
-        for f in b.link_faces:
-            inward += f.calc_center_median() - b.co
-        bis = e1 + e2
-        if bis.length < 1e-9:
-            continue
-        if bis.dot(inward) < 0.0:
-            slits[b] = bis.normalized()
-            continue
-        if bis.dot(inward) <= 0.0:
-            continue
-        half = ang * 0.5
-        if half < 1e-6:
-            # the two boundary edges leave in the same direction (a zero-
-            # width spike): sin(half) == 0. Cap at CORNER_MAX like any other
-            # very acute corner instead of dividing by zero (raised on a
-            # twice-inset jacket, 2026-09-05).
-            out[b] = (width * CORNER_MAX, width * CORNER_MAX)
-            continue
-        reach = min(width / math.sin(half), width * CORNER_MAX)
-        along = min(width / math.tan(half), width * CORNER_MAX)
-        out[b] = (reach, along)
-    return out, slits
-
-
-def _fix_corners(bm, strip_faces, corners):
-    """Uneven offset puts every row vertex `width` from its outline vertex
-    along the bisector. At a sharp convex corner that is too close: the rows
-    coming along the two edges meet beyond it and the strip folds over
-    (inverted faces at a 37 degree tip, measured). The corner's row vertex is
-    moved to where the two offset lines meet (`reach`), and the row vertices
-    of the outline vertices within `along` of the corner - whose own offset
-    points lie beyond the other edge's offset line - are welded onto it, so
-    the strip ends in a clean point. The interior vertices that the moved
-    corner would run into were absorbed beforehand (see _inset_pieces).
-    Returns the number of corners treated."""
-    rails = {}
-    for f in strip_faces:
-        for e in f.edges:
-            x, y = e.verts
-            if x.is_boundary and not y.is_boundary:
-                rails.setdefault(x, y)
-            elif y.is_boundary and not x.is_boundary:
-                rails.setdefault(y, x)
-    targetmap = {}
-    moved = 0
-    for c, (reach, along) in corners.items():
-        if not c.is_valid or c not in rails:
-            continue
-        r = rails[c]
-        d = r.co - c.co
-        if d.length < 1e-12:
-            continue
-        r.co = c.co + d.normalized() * reach
-        moved += 1
-        # walk the outline both ways and merge the near rows into r
-        for e0 in [e for e in c.link_edges if e.is_boundary]:
-            prev, cur, dist = c, e0.other_vert(c), e0.calc_length()
-            while dist < along and cur.is_valid:
-                rc = rails.get(cur)
-                if rc is not None and rc is not r and rc.is_valid and rc not in targetmap:
-                    targetmap[rc] = r
-                nxt = [e for e in cur.link_edges if e.is_boundary and e.other_vert(cur) is not prev]
-                if len(nxt) != 1:
-                    break
-                prev, cur = cur, nxt[0].other_vert(cur)
-                dist += nxt[0].calc_length()
-    targetmap = {k: v for k, v in targetmap.items() if v not in targetmap}
-    if targetmap:
-        bmesh.ops.weld_verts(bm, targetmap=targetmap)
-    return moved
-
-
-def _fix_slits(bm, strip_faces, slits, width):
-    """At a concave sharp corner (a dart / slit tip), the offset rows coming
-    from the two sides cross each other before they reach `width` of the
-    tip: a 2D-inverted strip face on the near side, a fan of long edges at
-    the tip on the far side (the row vertices from both sides land almost on
-    top of each other instead of meeting). Every row vertex within `width`
-    of the tip — measured as the perpendicular distance from the slit's
-    axis, not the distance along it — is moved onto the axis line instead of
-    its own offset direction, so both sides run parallel to the slit and
-    close cleanly at the tip; the tip's own row vertex is left where it is.
-    Row vertices from the two sides that end up within `width * 0.05` of
-    each other are then welded into one. Returns the number of tips fixed."""
-    rails = {}
-    for f in strip_faces:
-        for e in f.edges:
-            x, y = e.verts
-            if x.is_boundary and not y.is_boundary:
-                rails.setdefault(x, y)
-            elif y.is_boundary and not x.is_boundary:
-                rails.setdefault(y, x)
-    moved_verts = []
-    fixed = 0
-    for t, axis in slits.items():
-        if not t.is_valid or t not in rails:
-            continue
-        sides = [e for e in t.link_edges if e.is_boundary]
-        if len(sides) != 2:
-            continue
-        any_side = False
-        for e0 in sides:
-            prev, cur = t, e0.other_vert(t)
-            while cur.is_valid:
-                d = ((cur.co - t.co) - axis * (cur.co - t.co).dot(axis)).length
-                if d >= width:
-                    break
-                r = rails.get(cur)
-                if r is not None and r.is_valid:
-                    r.co = t.co + axis * (cur.co - t.co).dot(axis)
-                    moved_verts.append(r)
-                    any_side = True
-                nxt = [e for e in cur.link_edges if e.is_boundary and e.other_vert(cur) is not prev]
-                if len(nxt) != 1:
-                    break
-                prev, cur = cur, nxt[0].other_vert(cur)
-        if any_side:
-            fixed += 1
-    if moved_verts:
-        pts = [v for v in moved_verts if v.is_valid]
-        kd = kdtree.KDTree(len(pts))
-        for i, v in enumerate(pts):
-            kd.insert(v.co, i)
-        kd.balance()
-        thresh = width * 0.05
-        targetmap = {}
-        for i, v in enumerate(pts):
-            if v in targetmap:
-                continue
-            for (_co, j, _d) in kd.find_range(v.co, thresh):
-                if j <= i:
-                    continue
-                o = pts[j]
-                if o is v or o in targetmap:
-                    continue
-                targetmap[o] = v
-        targetmap = {k: v for k, v in targetmap.items() if v not in targetmap}
-        if targetmap:
-            bmesh.ops.weld_verts(bm, targetmap=targetmap)
-    return fixed
-
-
 def _sanitize_before_inset(bm, flat):
     """Repair any non-finite vertex the mesh arrives with, before an inset
     reads a single position from it. Returns the number repaired.
@@ -1342,159 +1203,824 @@ def _sanitize_before_inset(bm, flat):
 
 
 def inset_pieces(bm, width, sharp_inner=True, progress=None, flat=None):
-    """`flat`: (flat_key_name, basis_key_name) to do the work on the flat
-    shape (see FlatSession); None works in 3D as before."""
+    """Inset every pattern piece's outline by `width` on the flat shape.
+
+    `flat`: (flat_key_name, basis_key_name) — required. The whole method is a
+    2D one (a true offset of the outline polygon), so there is no 3D path;
+    the operators refuse a Guide without a planar shape key before they get
+    here.
+
+    Per piece, with P the outline polygon (outer loop plus holes):
+
+        Q  = P.buffer(-width, mitre)   the inner row, a TRUE offset
+        S  = P - Q                     the strip: outline <-> row
+        G  = Q - core                  the gap between the row and the core
+
+    `core` is the original faces that lie entirely inside Q (plus any Inset
+    Line band, which is kept whole); every other face is deleted and S and G
+    are re-triangulated by shapely's constrained Delaunay, whose only allowed
+    vertices are the outline's, the row's and the core's. Nothing is welded,
+    so every outline vertex survives and the sewn pairs stay 1:1 by
+    construction — the seam desync the old absorb-and-weld method had to
+    repair afterwards cannot arise. Concave tips (slits, darts) close by
+    themselves: the offset polygon simply has no crossing rows there.
+
+    Returns a stats dict."""
+    if not flat:
+        raise ValueError("inset_pieces needs a flat shape key: "
+                         "flat=(flat_key_name, basis_key_name)")
+    require_shapely()
     n_nonfinite = _sanitize_before_inset(bm, flat)
-    session = FlatSession(bm, *flat) if flat else None
-    if session is not None:
-        session.enter_2d()
-    stats = _inset_pieces(bm, width, sharp_inner, progress)
-    if session is not None:
-        stats['unmapped'] = session.end()
-        stats['clamped'] = getattr(session, 'clamped', 0)
-        stats['loose_removed'] = getattr(session, 'loose_removed', 0)
-    # session.basis / session.flat (in 3D mode: None / None) are BMLayerItems
-    # that stay valid past end() — it only removes its own int PIECE layer, a
-    # different layer domain (verified headless: removing an int vertex
-    # layer does not invalidate a shape vertex layer's BMLayerItem).
-    # resync_seams needs the mesh in the Basis/3D frame, which is exactly
-    # what end() (or, in 3D mode, _inset_pieces itself) leaves it in.
-    basis = session.basis if session else None
-    flat_lay = session.flat if session else None
-    active = (session.active if session is not None and not session.active_is_basis
-              else None)
-    resync = resync_seams(bm, basis, flat_lay, active_layer=active)
+    session = FlatSession(bm, *flat)
+    session.enter_2d()
+    stats = _inset_pieces_2d(bm, width, sharp_inner=sharp_inner,
+                             progress=progress)
+    stats['unmapped'] = session.end()
+    stats['clamped'] = getattr(session, 'clamped', 0)
+    stats['loose_removed'] = getattr(session, 'loose_removed', 0)
+    # session.basis / session.flat stay valid past end() (it removes its own
+    # int PIECE layer, a different layer domain). resync_seams needs the mesh
+    # in the Basis / 3D frame, which is what end() leaves it in. The 2D method
+    # is not supposed to desync anything, so this is a safety net that should
+    # report zeros — and the stats say so.
+    active = (session.active if not session.active_is_basis else None)
+    resync = resync_seams(bm, session.basis, session.flat, active_layer=active)
     stats['resync_split'] = resync['split']
     stats['resync_zero'] = resync['zero_welded']
     stats['resync_retri'] = resync['retriangulated']
     stats['resync_unresolved'] = resync['unresolved']
-    desync_stats = count_seam_desync(bm, basis_layer=basis)
-    stats['desync'] = desync_stats['desync']
-    stats['zero_len'] = desync_stats['zero_len']
+    d = count_seam_desync(bm, basis_layer=session.basis)
+    stats['desync'] = d['desync']
+    stats['zero_len'] = d['zero_len']
     stats['nonfinite'] = n_nonfinite + getattr(session, 'nonfinite', 0)
     return stats
 
 
-def _inset_pieces(bm, width, sharp_inner=True, progress=None):
-    """For every pattern piece: absorb the vertices closer than
-    ABSORB_MARGIN * `width` to the outline, then inset the outline by `width`
-    so a vertex row runs parallel to it (the parallel internal line, made in
-    Blender).
+def _inset_pieces_2d(bm, width, margin=ABSORB_MARGIN, sharp_inner=True,
+                     progress=None):
+    """Run on a bmesh whose v.co already holds the flat shape (see
+    inset_pieces). Returns a Counter-backed stats dict."""
+    import shapely
+    from shapely.geometry import Polygon, LineString, Point
+    from shapely.ops import nearest_points
+    from shapely.prepared import prep
 
-    The absorb radius is deliberately wider than the inset: an export made
-    with the parallel-line trick already has an internal line at the width
-    being inset by, and a vertex left standing between `width` and the absorb
-    radius is pierced by the new row. See ABSORB_MARGIN.
-
-    Absorb rule: a vertex inside the absorb radius is collapsed along an
-    existing edge onto its nearest outline vertex; one with no outline
-    neighbour is dissolved on its own. (Dissolving the whole ring at once
-    leaves an annular face bmesh cannot represent; welding onto a
-    non-adjacent vertex makes non-manifold edges. Both were tried.) The
-    needle triangles that collapse leaves on the outline are then removed —
-    see _collapse_slivers, they are what dented the row.
-
-    The inset uses the uneven offset: the even (mitre) offset shoots out at
-    acute corners (49 mm measured for a 1 mm inset). The inner edges of the
-    strip are marked sharp so the strip's normals do not leak into the
-    irregular triangles further in (the visible residue otherwise).
-
-    Returns a stats dict."""
     tick = progress if callable(progress) else (lambda f: None)
-    bm.normal_update()
+    rlay = row_layer(bm)
+    blay = bm.faces.layers.int.get(BAND_LAYER)
+    klay = bm.edges.layers.int.get(KIND_LAYER)
+    bm.verts.ensure_lookup_table()
     parts = _pieces(bm)
-    stats = {'pieces': len(parts), 'absorbed': 0, 'dissolved': 0, 'slivers': 0,
-             'strip_faces': 0}
-    targetmap = {}
-    dissolve = []
-    absorb_r = width * ABSORB_MARGIN
-    reach = absorb_r * 1.5
-    corners_all = {}
-    slits_all = {}
-    for comp in parts:
+    stats = Counter()
+    stats['pieces'] = len(parts)
+    row_edges_all = []
+    for k, comp in enumerate(parts):
         bedges = list({e for f in comp for e in f.edges if e.is_boundary})
         if not bedges:
+            stats['pieces_no_outline'] += 1
             continue
-        bset = {v for e in bedges for v in e.verts}
-        index = _SegmentIndex(bedges)
-        # sharp convex corners: the strip must reach further in there (see
-        # _fix_corners), so everything within that reach of the corner is
-        # absorbed too, or the widened corner runs into interior triangles
-        # (16 inverted faces measured without this)
-        corners, slits = _sharp_corners(bm, bset, width)
-        corners_all.update(corners)
-        slits_all.update(slits)
-        c_reach = max([r for r, _a in corners.values()] + [0.0]) * ABSORB_MARGIN
-        dist = _surface_band(bm, bset, max(reach, c_reach * 1.5))
-        for v in dist:
-            if v in bset:
-                continue
-            d = index.distance(v.co, None, k=8)
-            if d is None:
-                continue
-            if d >= absorb_r and not any((v.co - c.co).length < r * ABSORB_MARGIN
-                                         for c, (r, _a) in corners.items()):
-                continue
-            nb = [e.other_vert(v) for e in v.link_edges if e.other_vert(v) in bset]
-            tgt = _collapse_target(v, nb) if nb else None
-            if tgt is not None:
-                targetmap[v] = tgt
-            else:
-                dissolve.append(v)
-    tick(0.3)
-    n0 = len(bm.verts)
-    if targetmap:
-        bmesh.ops.weld_verts(bm, targetmap=targetmap)
-    dissolve = [v for v in dissolve if v.is_valid]
-    if dissolve:
-        bmesh.ops.dissolve_verts(bm, verts=dissolve, use_face_split=False,
-                                 use_boundary_tear=False)
-    stats['absorbed'] = n0 - len(bm.verts)
-    stats['dissolved'] = len(dissolve)
-    stats['slivers'] = _collapse_slivers(bm, width * SLIVER_ALTITUDE)
-    bm.normal_update()
-    stats['flipped'] = _flip_outline_slivers(bm)
-    bm.normal_update()
-    tick(0.5)
-    # Adding a custom data layer reallocates: make it before taking any
-    # element references.
-    rlay = row_layer(bm)
-    parts = _pieces(bm)
-    for comp in parts:
-        if not any(e.is_boundary for f in comp for e in f.edges):
+        bverts = {v for e in bedges for v in e.verts}
+        P = _polygon_from_loops(_loops(bedges))
+        if P is None or not P.is_valid:
+            stats['pieces_invalid_outline'] += 1
             continue
-        r = bmesh.ops.inset_region(bm, faces=comp, thickness=width, depth=0.0,
-                                   use_boundary=True, use_even_offset=False,
-                                   use_interpolate=True, use_relative_offset=False,
-                                   use_edge_rail=False, use_outset=False)
-        stats['strip_faces'] += len(r['faces'])
-        inner = {v for f in r['faces'] for v in f.verts if not v.is_boundary}
-        for f in r['faces']:
+        # face orientation sign of the piece in 2D
+        signs = Counter()
+        for f in comp[:: max(1, len(comp) // 500)]:
+            signs[_signed_area([(v.co.x, v.co.y) for v in f.verts]) > 0] += 1
+        ccw = signs[True] >= signs[False]
+
+        Q = P.buffer(-width, join_style='mitre', mitre_limit=MITRE_LIMIT)
+        if Q.is_empty:
+            stats['pieces_too_thin'] += 1
+            continue
+        stats['outline_verts'] += len(bverts)
+        Qp = P.buffer(-width * margin, join_style='mitre', mitre_limit=MITRE_LIMIT)
+        Q_prep = prep(Q)
+
+        # --- core faces: entirely inside Q' (all vertices), and inside Q as a
+        #     polygon where a vertex is close enough to the row to matter
+        verts = list({v for f in comp for v in f.verts})
+        xs = np.fromiter((v.co.x for v in verts), dtype=float, count=len(verts))
+        ys = np.fromiter((v.co.y for v in verts), dtype=float, count=len(verts))
+        inside_p = (shapely.contains_xy(Qp, xs, ys) if not Qp.is_empty
+                    else np.zeros(len(verts), bool))
+        vin = {v: bool(b) for v, b in zip(verts, inside_p)}
+        # a face far from the row needs no polygon test: anything whose
+        # vertices are all deeper than Q' by more than the face can reach.
+        deep_lim = width * margin + 3.0 * width
+        Qd = P.buffer(-deep_lim, join_style='mitre', mitre_limit=MITRE_LIMIT)
+        inside_d = (shapely.contains_xy(Qd, xs, ys) if not Qd.is_empty
+                    else np.zeros(len(verts), bool))
+        vdeep = {v: bool(b) for v, b in zip(verts, inside_d)}
+        core = []
+        n_band = 0
+        for f in comp:
+            fv = f.verts
+            if blay is not None and f[blay]:
+                # an Inset Line band: the fold's own geometry, kept whole;
+                # the strip is built around it (S and G subtract it below)
+                core.append(f)
+                n_band += 1
+                continue
+            if not all(vin[v] for v in fv):
+                continue
+            if all(vdeep[v] for v in fv):
+                core.append(f)
+                continue
+            stats['core_tested'] += 1
+            if Q_prep.contains(Polygon([(v.co.x, v.co.y) for v in fv])):
+                core.append(f)
+        stats['band_faces_kept'] += n_band
+        core_set = set(core)
+        removed = [f for f in comp if f not in core_set]
+        stats['faces_removed'] += len(removed)
+
+        # --- one row vertex per outline vertex (GEOS simplifies the ring
+        #     before buffering, see _densify_rows)
+        Q = _densify_rows(Q, bverts, width, stats)
+
+        # --- crease edges that lose every face become CONSTRAINTS: the fold's
+        #     own edges survive the inset, so a later Inset Line only has to
+        #     reach the strip's inner row, never the outline.
+        crease_lines = []
+        if klay is not None:
+            rv = {v for f in removed for v in f.verts}
+            seen_e = set()
+            for v in rv:
+                if not v.is_valid:
+                    continue
+                for e in v.link_edges:
+                    if e in seen_e or e[klay] != KIND_CREASE:
+                        continue
+                    seen_e.add(e)
+                    a, b = e.verts
+                    if a in rv and b in rv and not any(f in core_set for f in e.link_faces):
+                        pa = (a.co.x, a.co.y)
+                        pb = (b.co.x, b.co.y)
+                        if pa != pb:
+                            crease_lines.append(LineString([pa, pb]))
+
+        # --- the points where a crease crosses Q. The crossing must be a
+        #     vertex of Q ITSELF before S and G are cut, so both regions share
+        #     the identical coordinate: a fold usually starts at an outline
+        #     vertex, whose foot lands a few um from the crossing, and the two
+        #     vertices 0.0003 mm apart left a zero-length edge and a crack (62
+        #     hole edges measured).
+        crossings = []
+        if crease_lines:
+            xg = Q.boundary.intersection(shapely.union_all(crease_lines))
+            for p in shapely.get_parts(xg):
+                if p.geom_type == 'Point':
+                    crossings.append((p.x, p.y))
+        stats['crease_crossings'] += len(crossings)
+        if crossings:
+            Q = _densify_rows(Q, (), width, stats, priority=crossings)
+        stats['q_verts'] += sum(len(r) for qp in _polys(Q) for r in _ring_coords(qp))
+
+        # --- core region from its boundary linework. build_area handles what
+        #     a loop walk cannot: a core that touches itself at one vertex
+        #     (figure-8, the loop is not simple), nested islands, and several
+        #     components sharing a vertex. Walking loops and dropping the
+        #     non-simple ones left core faces OUTSIDE core_geom, so G was cut
+        #     too large and its triangles overlapped the kept faces (58 hole
+        #     edges on a 3.3 mm strap, measured).
+        cedges = set()
+        for f in core:
             for e in f.edges:
-                if e.verts[0] in inner and e.verts[1] in inner:
-                    e[rlay] = 1
-                    if sharp_inner:
-                        e.smooth = False
-        # (the corners of the other pieces have no rail in this strip and
-        # are skipped inside)
-        stats['corners'] = stats.get('corners', 0) + _fix_corners(bm, r['faces'], corners_all)
-        # Disabled 2026-09-05: on the jacket it moved rows at 1 of 9 tips and raised
-        # the 2D-inverted count 17 -> 22 (measured). Kept for the next design pass.
-        if SLIT_FIX:
-            stats['slits'] = stats.get('slits', 0) + _fix_slits(bm, r['faces'], slits_all, width)
-    tick(0.8)
-    polys = [f for f in bm.faces if len(f.verts) > 3]
-    if polys:
-        bmesh.ops.triangulate(bm, faces=polys, quad_method='BEAUTY', ngon_method='BEAUTY')
+                if sum(1 for x in e.link_faces if x in core_set) == 1:
+                    cedges.add(e)
+        core_geom = None
+        if cedges:
+            lines = [LineString([(e.verts[0].co.x, e.verts[0].co.y),
+                                 (e.verts[1].co.x, e.verts[1].co.y)]) for e in cedges]
+            core_geom = shapely.build_area(shapely.node(shapely.union_all(lines)))
+            if core_geom.is_empty:
+                core_geom = None
+                stats['core_geom_empty'] += 1
+            else:
+                a_faces = sum(abs(_signed_area([(v.co.x, v.co.y) for v in f.verts]))
+                              for f in core)
+                if abs(core_geom.area - a_faces) > 1e-9 + 1e-4 * a_faces:
+                    stats['core_geom_area_mismatch'] += 1
+
+        S = P.difference(Q)
+        G = Q if core_geom is None else Q.difference(core_geom)
+        if core_geom is not None and n_band:
+            # a band that reaches the outline protrudes into the strip zone
+            S = S.difference(core_geom)
+        if not S.is_valid:
+            S = S.buffer(0)
+        if not G.is_valid:
+            G = G.buffer(0)
+
+        # --- delete the non-core faces (faces only: outline and core vertices
+        #     stay, the loose rest is swept at the end)
+        if removed:
+            bmesh.ops.delete(bm, geom=removed, context='FACES_ONLY')
+
+        vmap = {}
+        for v in verts:
+            if v.is_valid:
+                vmap[_key(v.co.x, v.co.y)] = v
+
+        stats['crease_constraints'] += len(crease_lines)
+        crease_geom = shapely.union_all(crease_lines) if crease_lines else None
+
+        # --- rungs: GEOS's constrained_delaunay_triangles is an ear-clipping
+        #     polygon triangulator, not a Delaunay of the point set. Handed a
+        #     ring-shaped region (S is an annulus wherever the piece is wider
+        #     than 2 W: outline outside, row inside) it joins the hole to the
+        #     shell with one bridge and then clips ears from there, which on
+        #     a 0.33 mm x 23 mm strip came out as two crossing fans of
+        #     slivers: a 22.85 mm edge from one row corner to 47 outline
+        #     vertices (measured on a trouser waistband, 2026-09-13). Cutting
+        #     the region first into one cell per outline vertex — a rung from
+        #     the vertex to its foot on the row — makes every cell a small
+        #     quad the triangulator cannot get wrong (longest edge 22.85 ->
+        #     0.70 mm, same triangle count, faster). G gets the same
+        #     treatment with rungs from the row vertices to the core edge.
+        #     Both ends of a rung must be EXISTING vertices with their exact
+        #     coordinates (a Q ring vertex, an outline vertex, a core edge
+        #     vertex): a rung ending at a computed foot a few nm beside a ring
+        #     vertex would be noded into a second vertex there — 769
+        #     degenerate triangles and 276 cracks on the first try. And the
+        #     rung must lie inside the region (covers), or it is dropped.
+        q_pts = [c for qp in _polys(Q) for r in _ring_coords(qp) for c in r]
+        q_kd = kdtree.KDTree(len(q_pts))
+        for i, (x, y) in enumerate(q_pts):
+            q_kd.insert(Vector((x, y, 0.0)), i)
+        q_kd.balance()
+        S_prep = prep(S)
+        rungs_S = []
+        for v in bverts:
+            _co, i, d = q_kd.find(v.co)
+            if d is None or d <= 0.0 or d > 1.5 * width:
+                continue
+            line = LineString([(v.co.x, v.co.y), q_pts[i]])
+            if S_prep.covers(line):
+                rungs_S.append(line)
+            else:
+                stats['rungs_S_outside'] += 1
+        rungs_G = []
+        if core_geom is not None and not G.is_empty:
+            c_verts = list({v for e in cedges for v in e.verts})
+            c_kd = kdtree.KDTree(len(c_verts))
+            for i, v in enumerate(c_verts):
+                c_kd.insert(v.co, i)
+            c_kd.balance()
+            G_prep = prep(G)
+            for (x, y) in q_pts:
+                _co, i, d = c_kd.find(Vector((x, y, 0.0)))
+                if d is None or d <= 0.0 or d > 3.0 * width:
+                    continue
+                cv = c_verts[i]
+                line = LineString([(x, y), (cv.co.x, cv.co.y)])
+                if G_prep.covers(line):
+                    rungs_G.append(line)
+                else:
+                    stats['rungs_G_outside'] += 1
+        stats['rungs_S'] += len(rungs_S)
+        stats['rungs_G'] += len(rungs_G)
+
+        def _regions(region, tag, rungs):
+            """Sub-regions of `region`: cut by the rungs and by the crease
+            constraint lines."""
+            cuts = list(rungs)
+            if crease_geom is not None and not region.is_empty and crease_geom.intersects(region):
+                cuts.extend(shapely.get_parts(crease_geom.intersection(region)))
+            return _cut_regions(region, cuts, stats, tag)
+
+        S_regions = _regions(S, 'S', rungs_S)
+        G_regions = _regions(G, 'G', rungs_G)
+        # Every boundary coordinate of the regions is a vertex: rows, and the
+        # crease / row crossings the noding made. A coordinate the noding
+        # moved by a few ulps must NOT become a second vertex next to the
+        # first (that is a crack along the row): reuse anything within float32
+        # resolution.
+        near_list = [v for v in vmap.values() if v.is_valid]
+        near_kd = kdtree.KDTree(len(near_list))
+        for i, v in enumerate(near_list):
+            near_kd.insert(v.co, i)
+        near_kd.balance()
+        pending = []
+        for pg in S_regions + G_regions:
+            for ring in _ring_coords(pg):
+                for (x, y) in ring:
+                    kk = _key(x, y)
+                    if kk in vmap:
+                        continue
+                    _co, i, d = near_kd.find(Vector((x, y, 0.0)))
+                    if d is not None and d < F32_TOL:
+                        vmap[kk] = near_list[i]
+                        stats['ring_vert_reused'] += 1
+                        continue
+                    hit = None
+                    for (px, py, pv) in pending:
+                        if abs(px - x) < F32_TOL and abs(py - y) < F32_TOL:
+                            hit = pv
+                            break
+                    if hit is not None:
+                        vmap[kk] = hit
+                        stats['ring_vert_reused'] += 1
+                        continue
+                    nv = bm.verts.new((x, y, 0.0))
+                    vmap[kk] = nv
+                    pending.append((x, y, nv))
+                    stats['row_verts'] += 1
+
+        # --- triangulate S and G. Where an earlier band protrudes into the
+        #     strip, the row crosses the band's side: those crossing points
+        #     are resolved by splitting the band's side edge (EdgeSplitter).
+        splitter = None
+        if n_band:
+            band_edges = {e for f in core if f.is_valid and f[blay] for e in f.edges}
+            # ... plus every edge on the core boundary: a crossing point can
+            # also sit on the edge of a kept gap face next to the band
+            band_edges.update(e for e in cedges if e.is_valid)
+            if band_edges:
+                # the crossing points GEOS computes sit up to ~30 nm off the
+                # band edge (measured); 1 um catches them and is still far
+                # below anything the mesh can express
+                splitter = EdgeSplitter(band_edges, tol=max(1e-6, width * 1e-3))
+        new_faces_S = []
+        for pg in S_regions:
+            new_faces_S.extend(_cdt_faces(bm, pg, vmap, ccw, stats, 'S', splitter))
+        new_faces_G = []
+        for pg in G_regions:
+            new_faces_G.extend(_cdt_faces(bm, pg, vmap, ccw, stats, 'G', splitter))
+        if splitter is not None:
+            stats['band_edges_split'] += splitter.splits
+            stats['band_faces_retri'] += splitter.finish(bm)
+        stats['strip_faces'] += len(new_faces_S)
+        stats['gap_faces'] += len(new_faces_G)
+
+        # --- row edges: new edges lying ON the row Q (both ends and the
+        #     middle within float32 resolution of Q's boundary); crease edges
+        #     re-tagged the same way against the constraint lines.
+        #     NOTE: BMVert.co is float32, so a 1 nm test against v.co never
+        #     passes — see F32_TOL.
+        qb = Q.boundary
+        new_edges = {e for f in new_faces_S + new_faces_G for e in f.edges}
+        for e in new_edges:
+            a, b = e.verts
+            pa, pb = (a.co.x, a.co.y), (b.co.x, b.co.y)
+            pm = ((pa[0] + pb[0]) * 0.5, (pa[1] + pb[1]) * 0.5)
+            if (qb.distance(Point(pa)) < F32_TOL and qb.distance(Point(pb)) < F32_TOL
+                    and qb.distance(Point(pm)) < F32_TOL):
+                e[rlay] = 1
+                if sharp_inner:
+                    e.smooth = False
+                row_edges_all.append(e)
+            elif (crease_geom is not None and klay is not None
+                  and crease_geom.distance(Point(pm)) < F32_TOL
+                  and crease_geom.distance(Point(pa)) < F32_TOL
+                  and crease_geom.distance(Point(pb)) < F32_TOL):
+                e[klay] = KIND_CREASE
+                stats['crease_edges_kept'] += 1
+
+        # Cracks between S and G (or S and a kept band): a vertex of one side
+        # lying on an edge of the other. Only the seams between regions can
+        # crack — an edge with one face, or whose two faces come from
+        # different regions — and only a vertex that still has faces can be
+        # the odd one out: an original vertex of the removed zone that happens
+        # to lie on the row (a CLO export with an internal line at exactly
+        # Width puts 164 of them there) has no faces, is swept as loose below,
+        # and must not split the row.
+        set_S = set(new_faces_S)
+        set_G = set(new_faces_G)
+
+        def _region_of(f):
+            return 0 if f in set_S else (1 if f in set_G else 2)
+
+        cand_edges = []
+        for e in new_edges:
+            if not e.is_valid or (e.verts[0] in bverts and e.verts[1] in bverts):
+                continue
+            lf = e.link_faces
+            if len(lf) < 2 or _region_of(lf[0]) != _region_of(lf[1]):
+                cand_edges.append(e)
+        cand_verts = list({v for e in cand_edges for v in e.verts if v.link_faces})
+        repair_t_junctions(bm, cand_edges, cand_verts, 1e-6, stats, 'P')
+        tick(0.1 + 0.8 * (k + 1) / len(parts))
+
+    # --- sweep: vertices that lost every face, wire edges
+    loose_v = [v for v in bm.verts if not v.link_faces]
+    stats['loose_verts_removed'] = len(loose_v)
+    if loose_v:
+        bmesh.ops.delete(bm, geom=loose_v, context='VERTS')
+    wire = [e for e in bm.edges if not e.link_faces]
+    stats['wire_edges_removed'] = len(wire)
+    if wire:
+        bmesh.ops.delete(bm, geom=wire, context='EDGES')
     for f in bm.faces:
         f.smooth = True
     bm.normal_update()
+    stats['row_edges'] = len(row_edges_all)
     tick(0.95)
-    return stats
+    return dict(stats)
+
+
+def _cut_regions(region, cuts, stats, tag):
+    """Sub-regions of `region`, cut by `cuts` (polygonize of the noded
+    boundary + cuts), or [region] itself when there is nothing to cut with.
+
+    Shared by both insets: the rungs that keep the ear-clipping CDT from
+    spanning a wide region with slivers are just extra lines in the
+    arrangement (see the rung comment in `_inset_pieces_2d`)."""
+    import shapely
+    from shapely.geometry import LineString
+    from shapely.prepared import prep
+
+    cuts = [c for c in cuts if c is not None and not c.is_empty]
+    if region is None or region.is_empty or not cuts:
+        return _polys(region) if region is not None else []
+    rings = []
+    for pg in _polys(region):
+        rings.append(LineString(list(pg.exterior.coords)))
+        for r in pg.interiors:
+            rings.append(LineString(list(r.coords)))
+    noded = shapely.node(shapely.union_all(rings + cuts))
+    faces_geom = shapely.polygonize(list(shapely.get_parts(noded)))
+    rp = prep(region)
+    out = []
+    for pg in _polys(faces_geom):
+        if pg.area <= 1e-18:
+            stats[tag + '_regions_tiny'] += 1
+            continue
+        # polygonize also returns the INTERIOR of every hole ring as a face:
+        # those are far from `region` and dropped. A sliver face of the region
+        # itself can have its representative point ON the boundary, where
+        # contains() is False — keep anything within float32 resolution of the
+        # region (11 such slivers per garment measured, each one a hole
+        # otherwise).
+        rpt = pg.representative_point()
+        if rp.contains(rpt) or region.distance(rpt) < F32_TOL:
+            out.append(pg)
+        else:
+            stats[tag + '_regions_outside'] += 1
+    stats[tag + '_regions'] += len(out)
+    cover = sum(pg.area for pg in out)
+    if abs(cover - region.area) > 1e-12 + 1e-6 * region.area:
+        stats[tag + '_regions_area_gap'] += 1
+    return out or _polys(region)
+
+
+def _register_region_coords(bm, regions, vmap, stats):
+    """Every boundary coordinate of `regions` must be a mesh vertex before the
+    CDT runs. Reuse anything within float32 resolution (a coordinate the
+    noding moved by a few ulps must not become a second vertex beside the
+    first — that is a crack), else create one."""
+    near_list = [v for v in vmap.values() if v.is_valid]
+    if not near_list:
+        return
+    near_kd = kdtree.KDTree(len(near_list))
+    for i, v in enumerate(near_list):
+        near_kd.insert(v.co, i)
+    near_kd.balance()
+    pending = []
+    for pg in regions:
+        for ring in _ring_coords(pg):
+            for (x, y) in ring:
+                kk = _key(x, y)
+                if kk in vmap:
+                    continue
+                _co, i, dd = near_kd.find(Vector((x, y, 0.0)))
+                if dd is not None and dd < F32_TOL:
+                    vmap[kk] = near_list[i]
+                    stats['ring_vert_reused'] += 1
+                    continue
+                hit = None
+                for (px, py, pv) in pending:
+                    if abs(px - x) < F32_TOL and abs(py - y) < F32_TOL:
+                        hit = pv
+                        break
+                if hit is not None:
+                    vmap[kk] = hit
+                    stats['ring_vert_reused'] += 1
+                    continue
+                nv = bm.verts.new((x, y, 0.0))
+                vmap[kk] = nv
+                pending.append((x, y, nv))
+                stats['row_verts'] += 1
+
+
+def _densify_rows(Q, bverts, width, stats, priority=()):
+    """Give the row one vertex per outline vertex again.
+
+    GEOS simplifies the input ring before buffering (vertices that deviate
+    from a straight line by less than ~1 % of the distance are dropped), so
+    the offset ring comes back with fewer vertices than the outline: 3457 for
+    5373 on a jacket. The row's edges would then be long chords across the
+    curved 3D surface. Every outline vertex is projected onto the nearest
+    ring of Q and the foot inserted as a ring vertex — it lies ON the true
+    offset, so it is still exactly `width` from the outline (a mitre corner's
+    own vertices stay farther, as intended). Feet closer than 5 % of the
+    width to an existing ring vertex are not inserted.
+
+    `priority`: (x, y) points ON the ring that must become ring vertices with
+    their exact coordinates (crease crossings). Feet within 25 % of the width
+    of a priority point are not inserted."""
+    import shapely
+    from shapely.geometry import Polygon, Point
+
+    rings = []   # (poly index, ring index, LinearRing)
+    polys = _polys(Q)
+    for pi, qp in enumerate(polys):
+        rings.append((pi, -1, qp.exterior))
+        for ri, r in enumerate(qp.interiors):
+            rings.append((pi, ri, r))
+    if not rings:
+        return Q
+    inserts = {i: [] for i in range(len(rings))}        # arc positions of feet
+    prio = {i: [] for i in range(len(rings))}           # (arc, rank, coord)
+    lim = width * 1.5
+    for (x, y) in priority:
+        p = Point(x, y)
+        best = None
+        for i, (_pi, _ri, ring) in enumerate(rings):
+            d = ring.distance(p)
+            if best is None or d < best[0]:
+                best = (d, i)
+        if best is None or best[0] > 1e-6:
+            stats['row_priority_off_ring'] += 1
+            continue
+        prio[best[1]].append((rings[best[1]][2].project(p), 0, (x, y)))
+    for v in bverts:
+        p = Point(v.co.x, v.co.y)
+        best = None
+        for i, (_pi, _ri, ring) in enumerate(rings):
+            d = ring.distance(p)
+            if d > lim:
+                continue
+            if best is None or d < best[0]:
+                best = (d, i)
+        if best is None:
+            stats['row_foot_none'] += 1
+            continue
+        ring = rings[best[1]][2]
+        inserts[best[1]].append(ring.project(p))
+    tol = width * 0.05
+    tol_p = width * 0.25
+    new_rings = {}
+    for i, (_pi, _ri, ring) in enumerate(rings):
+        coords = list(ring.coords)[:-1]
+        L = ring.length
+        pr = prio[i]
+        pr_s = [s for s, _r, _c in pr]
+
+        def near_prio(s, _pr_s=pr_s, _L=L):
+            return any(abs(s - q) < tol_p or _L - abs(s - q) < tol_p for q in _pr_s)
+
+        # ranks: 0 a crease crossing, 2 the ring's own vertex, 3 a foot. Feet
+        # near a fixed point are not inserted; within `tol` the better rank
+        # wins.
+        pts = [(ring.project(Point(c)), 2, c) for c in coords]
+        pts.extend(pr)
+        for s in inserts[i]:
+            if near_prio(s):
+                stats['row_foot_near_crossing'] += 1
+                continue
+            pt = ring.interpolate(s)
+            pts.append((s, 3, (pt.x, pt.y)))
+        pts.sort(key=lambda t: (t[0], t[1]))
+        out = []       # (s, rank, c)
+        for s, rank, c in pts:
+            if out and s - out[-1][0] < tol:
+                if rank < out[-1][1]:
+                    out[-1] = (s, rank, c)
+                stats['row_foot_merged'] += 1
+                continue
+            out.append((s, rank, c))
+        # the ring is closed: the first and the last may be within tol too
+        if len(out) > 3 and (L - out[-1][0]) + out[0][0] < tol:
+            if out[-1][1] < out[0][1]:
+                out[0] = out[-1]
+            out.pop()
+        new_rings[i] = [c for _s, _r, c in out]
+    rebuilt = []
+    for pi, qp in enumerate(polys):
+        shell = None
+        holes = []
+        for i, (ppi, ri, _ring) in enumerate(rings):
+            if ppi != pi:
+                continue
+            if ri == -1:
+                shell = new_rings[i]
+            else:
+                holes.append(new_rings[i])
+        if shell is None or len(shell) < 3:
+            continue
+        pg = Polygon(shell, [h for h in holes if len(h) >= 3])
+        if not pg.is_valid:
+            stats['q_densify_invalid'] += 1
+            pg = pg.buffer(0)
+        rebuilt.append(pg)
+    if not rebuilt:
+        return Q
+    return shapely.union_all(rebuilt) if len(rebuilt) > 1 else rebuilt[0]
+
+
+class EdgeSplitter:
+    """Resolves a region vertex that is not a mesh vertex yet but lies ON an
+    existing edge (a T-junction: the row of Inset Pieces crossing the side of
+    an earlier Inset Line band). The edge is split there; the face(s) on it
+    become quads and are re-triangulated at the end (`finish`)."""
+
+    def __init__(self, edges, tol=1e-9):
+        self.edges = [e for e in edges if e.is_valid]
+        self.tol = tol
+        self.kd = kdtree.KDTree(len(self.edges))
+        maxlen = 0.0
+        for i, e in enumerate(self.edges):
+            self.kd.insert((e.verts[0].co + e.verts[1].co) * 0.5, i)
+            maxlen = max(maxlen, (e.verts[0].co - e.verts[1].co).length)
+        self.kd.balance()
+        # a point on an edge is at most half its length from the midpoint
+        self.radius = 0.5 * maxlen + 1e-6
+        self.touched = set()
+        self.splits = 0
+        self.misses = 0
+
+    def resolve(self, x, y):
+        p = Vector((x, y, 0.0))
+        best = None
+        for (_co, i, _d) in self.kd.find_range(p, self.radius):
+            e = self.edges[i]
+            if not e.is_valid:
+                continue
+            a, b = e.verts[0].co, e.verts[1].co
+            t = b - a
+            L = t.length
+            if L < 1e-12:
+                continue
+            u = (p - a).dot(t) / (L * L)
+            if u <= 1e-9 or u >= 1.0 - 1e-9:
+                continue
+            dd = (p - (a + t * u)).length
+            if best is None or dd < best[0]:
+                best = (dd, e, u)
+        if best is None or best[0] > self.tol:
+            self.misses += 1
+            return None
+        _dd, e, u = best
+        self.touched.update(f for f in e.link_faces)
+        ne, nv = bmesh.utils.edge_split(e, e.verts[0], u)
+        nv.co = p
+        self.edges.append(ne)
+        self.splits += 1
+        return nv
+
+    def finish(self, bm):
+        polys = [f for f in self.touched if f.is_valid and len(f.verts) > 3]
+        if polys:
+            bmesh.ops.triangulate(bm, faces=polys, quad_method='BEAUTY',
+                                  ngon_method='BEAUTY')
+        return len(polys)
+
+
+def repair_t_junctions(bm, edges, verts, tol, stats, tag):
+    """Split every edge in `edges` at each vertex of `verts` that lies on its
+    interior (within `tol`), then re-triangulate the faces the splits turned
+    into quads. Returns the number of splits.
+
+    Safety net for the region method: two regions that share a boundary curve
+    must agree on its vertices. They do by construction (the row is densified
+    once, crease crossings are ring vertices before S and G are cut), but GEOS
+    overlay can still hand one region a vertex the other does not have —
+    measured 3 edges per garment after the fixes above: an A-B edge on one
+    side against A-X-B on the other, X on AB within 1 um. Both sides then have
+    a boundary edge there (a crack)."""
+    pts = [v for v in verts if v.is_valid]
+    if not pts:
+        return 0
+    kd = kdtree.KDTree(len(pts))
+    for i, v in enumerate(pts):
+        kd.insert(v.co, i)
+    kd.balance()
+    touched = set()
+    splits = 0
+    stack = [e for e in edges if e.is_valid]
+    guard = 0
+    while stack and guard < 10 * len(edges) + 100:
+        guard += 1
+        e = stack.pop()
+        if not e.is_valid:
+            continue
+        a, b = e.verts[0], e.verts[1]
+        t = b.co - a.co
+        L = t.length
+        if L < 1e-12:
+            continue
+        mid = (a.co + b.co) * 0.5
+        hit = None
+        for (_co, i, _d) in kd.find_range(mid, 0.5 * L + tol):
+            v = pts[i]
+            if v is a or v is b or not v.is_valid:
+                continue
+            u = (v.co - a.co).dot(t) / (L * L)
+            if u <= 1e-6 or u >= 1.0 - 1e-6:
+                continue
+            if (v.co - (a.co + t * u)).length <= tol:
+                hit = (u, v)
+                break
+        if hit is None:
+            continue
+        u, v = hit
+        kind = 'crack' if len(e.link_faces) < 2 else '2faced'
+        stats[tag + '_tjunction_' + kind] += 1
+        touched.update(e.link_faces)
+        ne, nv = bmesh.utils.edge_split(e, a, u)
+        # the split made a new vertex ON the crack; weld it onto the existing
+        # one so both sides share a single vertex
+        bmesh.ops.weld_verts(bm, targetmap={nv: v})
+        splits += 1
+        stats[tag + '_tjunction_split'] += 1
+        for x in v.link_edges:
+            if x.is_valid and (x.other_vert(v) is a or x.other_vert(v) is b):
+                stack.append(x)
+    polys = [f for f in touched if f.is_valid and len(f.verts) > 3]
+    if polys:
+        bmesh.ops.triangulate(bm, faces=polys, quad_method='BEAUTY',
+                              ngon_method='BEAUTY')
+    return splits
+
+
+def _cdt_faces(bm, region, vmap, ccw, stats, tag, splitter=None):
+    """Constrained Delaunay of `region`; every triangle vertex must already be
+    in `vmap` (no Steiner points), or lie on an edge `splitter` may split.
+    Returns the new faces."""
+    import shapely
+
+    faces = []
+    if region is None or region.is_empty:
+        return faces
+    tris = shapely.constrained_delaunay_triangles(region)
+    # Fallback for a coordinate whose 1 nm key does not match although the
+    # vertex is there (a GEOS output coordinate can differ from the input in
+    # the last bits, and rounding then flips a digit — measured: a miss with
+    # the nearest vertex at 0.00 um).
+    near_kd = None
+    near_list = None
+
+    def _nearest(x, y):
+        nonlocal near_kd, near_list
+        if near_kd is None:
+            near_list = [v for v in vmap.values() if v.is_valid]
+            near_kd = kdtree.KDTree(len(near_list))
+            for i, v in enumerate(near_list):
+                near_kd.insert(v.co, i)
+            near_kd.balance()
+        _co, i, d = near_kd.find(Vector((x, y, 0.0)))
+        if d is not None and d < 1e-7:
+            stats[tag + '_key_fallback'] += 1
+            return near_list[i]
+        return None
+
+    for t in _polys(tris):
+        cs = list(t.exterior.coords)[:-1]
+        if len(cs) != 3:
+            stats[tag + '_non_tri'] += 1
+            continue
+        vs = []
+        ok = True
+        for (x, y) in cs:
+            v = vmap.get(_key(x, y))
+            if v is None:
+                v = _nearest(x, y)
+                if v is not None:
+                    vmap[_key(x, y)] = v
+            if v is None and splitter is not None:
+                v = splitter.resolve(x, y)
+                if v is not None:
+                    vmap[_key(x, y)] = v
+                    stats[tag + '_split'] += 1
+            if v is None:
+                ok = False
+                break
+            vs.append(v)
+        if not ok:
+            stats[tag + '_steiner'] += 1
+            continue
+        # new vertices all carry index -1 until index_update: compare identity
+        if len(set(map(id, vs))) < 3:
+            stats[tag + '_degenerate'] += 1
+            continue
+        if (_signed_area(cs) > 0) != ccw:
+            vs.reverse()
+        try:
+            f = bm.faces.new(vs)
+        except ValueError:
+            stats[tag + '_dup_face'] += 1
+            continue
+        faces.append(f)
+    return faces
 
 
 # ---------------------------------------------------------------------------
-# fold-line repair
+# fold-line repair. No longer part of either inset (the 2D method keeps the
+# fold's own edges instead of rebuilding them); kept for callers that want to
+# close the gaps in a hand-selected line.
 
 def _diagonal_between(a, b, exclude):
     """The edge c1-c2 whose two triangles are exactly {a,c1,c2} and {b,c1,c2},
@@ -1662,333 +2188,719 @@ def repair_fold_lines(bm, verts, extend=False, min_dihedral_deg=6.0):
 # ---------------------------------------------------------------------------
 # 3. inset line (an internal fold line, e.g. a lapel roll line)
 
-def _protected(v, rlay):
-    """A vertex Inset Line may not absorb: on the pattern outline, or on a
-    row an earlier inset built (ROW_LAYER set on its edges)."""
-    if v.is_boundary:
-        return True
-    if rlay is not None:
-        for e in v.link_edges:
-            if e[rlay]:
-                return True
-    return False
+def inset_line(bm, edges, width, progress=None, flat=None, sharp_outer=True):
+    """Inset a fold line to both sides: the same region method as
+    inset_pieces, applied to a line inside a pattern piece.
 
+    `edges`: the fold line as a set of EDGES; each connected component is one
+    line. The caller decides what the line is (the selected edges, or the
+    crease edges Find Folds tagged) — nothing here reads 3D angles, walks
+    outward or repairs missing edges.
+    `flat`: (flat_key_name, basis_key_name) — required, as for inset_pieces.
 
-def inset_line(bm, verts, width, extend=True, min_dihedral_deg=6.0, profile=1.0,
-               progress=None, flat=None):
-    """Inset an internal fold line to both sides: the same idea as
-    inset_pieces, applied to a line inside a pattern piece instead of to its
-    outline. In 2D terms: two lines parallel to the crease at +-`width`, and
-    everything that fell between them absorbed.
+    The band is the true two-sided offset of the line at `width` (flat caps,
+    mitre joins), clipped by the piece; the line's own vertices and edges stay
+    exactly where they are (they ARE the fold). Run AFTER Inset Pieces: the
+    piece then carries a row (ROW_LAYER) one width in from its outline, and
+    the band stops at that row instead of at the outline, so the strip is
+    never touched. Without a row the band runs to the outline and splits the
+    outline edge it lands on together with its sewn twin, at the same
+    parameter, so the 1:1 pairing survives.
 
-    `verts`: the fold-line vertices (selected by the user; with `extend` the
-    line is first walked outward from them, as in repair_fold_lines).
-
-    1. Missing edges along the line are restored (repair_fold_lines), so the
-       line is a chain of edges.
-    2. Every vertex within ABSORB_MARGIN * `width` of the chain (over the
-       surface, reachable) is collapsed along an existing edge onto its
-       nearest chain vertex, or dissolved if it has none — the same rule as
-       inset_pieces. Vertices on the pattern outline and on the row of an
-       earlier Inset Pieces are left alone (see _protected): the band must
-       not tear the outline strip where the line runs into it. Chain
-       vertices that are protected, or whose protected neighbour is closer
-       than `width`, are trimmed off the chain instead, so no bevel offset
-       has to slide along an edge shorter than itself (the bevel's overlap
-       clamp is global: one short edge would shrink the whole band).
-    3. Needle triangles left on the chain are welded away (_collapse_slivers).
-    4. The chain edges are bevelled by `width` with 2 segments: the middle
-       row stays on the crease, the two outer rows are the parallel lines.
-       `profile` 1.0 keeps the fold's shape (the middle row exactly on the
-       old edge); 0.5 rounds it.
-    5. The outer rows' edges are marked sharp (the band's normals must not
-       leak into the irregular triangles beside it), ngons re-triangulated,
-       all faces smooth.
-
-    Returns a stats dict; 'width_achieved' is the median distance from the
-    middle row to the outer rows, which should equal `width` — smaller means
-    the overlap clamp fired.
-
-    `flat`: (flat_key_name, basis_key_name) — the chain is found in 3D (the
-    fold's dihedral is what identifies it), everything after that is done on
-    the flat shape and mapped back (see FlatSession)."""
-    tick = progress if callable(progress) else (lambda f: None)
-    stats = {'line_verts': 0, 'trimmed': 0, 'repaired': 0, 'absorbed': 0,
-             'dissolved': 0, 'slivers': 0, 'needles_merged': 0, 'bevel_faces': 0,
-             'sharp_edges': 0, 'width_achieved': 0.0}
-    verts = [v for v in verts if v.is_valid]
-    if len(verts) < 2:
-        return stats
-    # before anything reads a position (a repair may delete a vertex, so the
-    # selection is re-filtered below)
+    Returns a stats dict."""
+    if not flat:
+        raise ValueError("inset_line needs a flat shape key: "
+                         "flat=(flat_key_name, basis_key_name)")
+    require_shapely()
     n_nonfinite = _sanitize_before_inset(bm, flat)
-    # the layer first: adding one reallocates and invalidates element refs
-    rlay = row_layer(bm)
+    # Element references die when a layer is added: take the edge INDICES
+    # first, make sure every layer exists, then resolve them again.
+    bm.edges.index_update()
+    bm.edges.ensure_lookup_table()
+    idx = [e.index for e in edges if e.is_valid]
+    row_layer(bm)
     kind_layer(bm)
-    session = FlatSession(bm, *flat) if flat else None
-    if session is not None:
-        session.enter_3d()
-    bm.normal_update()
-    bm.verts.index_update()
-    bm.verts.ensure_lookup_table()
-    verts = [v for v in verts if v.is_valid]
-
-    # 1. the chain, with its missing edges restored
-    gaps, fixed, _n = repair_fold_lines(bm, verts, extend=extend,
-                                        min_dihedral_deg=min_dihedral_deg)
-    stats['repaired'] = fixed
-    chain = set(v for v in verts if v.is_valid)
-    if extend:
-        chain = _extend_selection(bm, list(chain), math.radians(min_dihedral_deg))
-    if session is not None:
-        session.enter_2d()
-    try:
-        stats = _inset_line_body(bm, chain, width, profile, rlay, stats, tick)
-    finally:
-        if session is not None:
-            stats['unmapped'] = session.end()
-            stats['clamped'] = getattr(session, 'clamped', 0)
-            stats['loose_removed'] = getattr(session, 'loose_removed', 0)
-    # see inset_pieces: resync_seams needs the Basis/3D frame that end() (or,
-    # in 3D mode, _inset_line_body itself) leaves the mesh in.
-    basis = session.basis if session else None
-    flat_lay = session.flat if session else None
-    active = (session.active if session is not None and not session.active_is_basis
-              else None)
-    resync = resync_seams(bm, basis, flat_lay, active_layer=active)
+    band_layer(bm)
+    session = FlatSession(bm, *flat)
+    session.enter_2d()
+    bm.edges.ensure_lookup_table()
+    n_edges = len(bm.edges)
+    chain = [bm.edges[i] for i in idx if 0 <= i < n_edges]
+    stats = _inset_line_2d(bm, chain, width, session.basis,
+                           sharp_outer=sharp_outer, progress=progress)
+    stats['unmapped'] = session.end()
+    stats['clamped'] = getattr(session, 'clamped', 0)
+    stats['loose_removed'] = getattr(session, 'loose_removed', 0)
+    active = (session.active if not session.active_is_basis else None)
+    resync = resync_seams(bm, session.basis, session.flat, active_layer=active)
     stats['resync_split'] = resync['split']
     stats['resync_zero'] = resync['zero_welded']
     stats['resync_retri'] = resync['retriangulated']
     stats['resync_unresolved'] = resync['unresolved']
-    desync_stats = count_seam_desync(bm, basis_layer=basis)
-    stats['desync'] = desync_stats['desync']
-    stats['zero_len'] = desync_stats['zero_len']
+    d = count_seam_desync(bm, basis_layer=session.basis)
+    stats['desync'] = d['desync']
+    stats['zero_len'] = d['zero_len']
     stats['nonfinite'] = n_nonfinite + getattr(session, 'nonfinite', 0)
     return stats
 
 
-def _inset_line_body(bm, chain, width, profile, rlay, stats, tick):
-    # trim: protected chain vertices, then ends whose protected neighbour is
-    # closer than the offset the bevel will slide along that edge
-    n_chain0 = len(chain)
-    # Protected chain vertices (on the outline, or on the Inset Pieces row)
-    # are trimmed, so the band stops one row short of the strip. Letting the
-    # band run into the strip was tried (2026-09-05): the bevel at a strip or
-    # outline vertex clamps that line to 0% and leaves needles (42 measured),
-    # so the small notch at the line's end is the lesser evil for now.
-    # Outline vertices stay as the band's terminals, so the band runs up to
-    # the outline (Inset Line runs BEFORE Inset Pieces; the strip is built
-    # afterwards around the band, whose rows it must not absorb). Vertices on
-    # an earlier inset's row are trimmed: a bevel ending on such a row clamps
-    # the whole line to 0% and leaves needles (measured).
-    chain = {v for v in chain if not (_protected(v, rlay) and not v.is_boundary)}
-    while True:
-        drop = [v for v in chain
-                if any(_protected(e.other_vert(v), rlay) and not e.other_vert(v).is_boundary
-                       and e.calc_length() < width * 0.9 for e in v.link_edges)]
-        if not drop:
-            break
-        chain.difference_update(drop)
-    stats['trimmed'] = n_chain0 - len(chain)
-    stats['line_verts'] = len(chain)
-    cedges = [e for e in bm.edges
-              if e.verts[0] in chain and e.verts[1] in chain and len(e.link_faces) == 2]
-    if not cedges:
-        return stats
+def _inset_line_2d(bm, chain_edges, width, basis_lay, margin=ABSORB_MARGIN,
+                   sharp_outer=True, progress=None):
+    """Run on a bmesh whose v.co already holds the flat shape (see
+    inset_line). `basis_lay`: the 3D shape layer, used to find sewn twins."""
+    import shapely
+    from shapely.geometry import Polygon, LineString, MultiLineString, Point
+    from shapely.prepared import prep
+
+    tick = progress if callable(progress) else (lambda f: None)
+    rlay = row_layer(bm)
+    klay = kind_layer(bm)
+    blay = band_layer(bm)
+    bm.verts.ensure_lookup_table()
+    stats = Counter()
+    # sewn twins: boundary vertices grouped by 3D position
+    twin_index = {}
+    for v in bm.verts:
+        if v.is_boundary:
+            twin_index.setdefault(tuple(round(c, 7) for c in v[basis_lay]), []).append(v)
+    placers = []
+    chain_edges = [e for e in chain_edges if e.is_valid and len(e.link_faces) == 2]
+    comps = _edge_components(chain_edges)
+    stats['lines'] = len(comps)
+    parts = _pieces(bm)
+    piece_of = {}
+    for k, comp in enumerate(parts):
+        for f in comp:
+            piece_of[f] = k
+    piece_cache = {}
+
+    def _orientation(comp):
+        signs = Counter()
+        for f in comp[:: max(1, len(comp) // 500)]:
+            signs[_signed_area([(v.co.x, v.co.y) for v in f.verts]) > 0] += 1
+        return signs[True] >= signs[False]
+
+    def piece_data(k):
+        """(clip polygon, placer, its vertices, ccw, clipped-to-row)."""
+        if k in piece_cache:
+            return piece_cache[k]
+        comp = parts[k]
+        bedges = list({e for f in comp for e in f.edges if e.is_boundary})
+        bverts = list({v for e in bedges for v in e.verts})
+        # After Inset Pieces the piece has a strip along its outline whose
+        # inner row is tagged ROW: the band then stops at that row (the strip
+        # is left alone; the fold's edges inside it were kept by Inset Pieces
+        # as constraints). Corners on the row snap to a row vertex or split
+        # the row edge — an unsewn edge, so no twin has to follow.
+        redges = list({e for f in comp for e in f.edges if e[rlay] == 1})
+        if redges:
+            rverts = list({v for e in redges for v in e.verts})
+            Pq = _polygon_from_loops(_loops(redges))
+            if Pq is not None and Pq.is_valid:
+                stats['pieces_clipped_to_row'] += 1
+                placer = OutlinePlacer(bm, redges, rverts, basis_lay, width, {}, stats)
+                placers.append(placer)
+                d = (Pq, placer, rverts, _orientation(comp), True)
+                piece_cache[k] = d
+                return d
+            stats['pieces_row_loops_bad'] += 1
+        P = _polygon_from_loops(_loops(bedges)) if bedges else None
+        placer = OutlinePlacer(bm, bedges, bverts, basis_lay, width, twin_index, stats)
+        placers.append(placer)
+        d = (P, placer, bverts, _orientation(comp), False)
+        piece_cache[k] = d
+        return d
+
+    # --- per piece: chain edges, band region, absorb zone
+    by_piece = {}
+    for comp in comps:
+        if len(comp) < 2:
+            stats['lines_too_short'] += 1
+            continue
+        k = piece_of.get(comp[0].link_faces[0])
+        if k is None:
+            stats['lines_no_piece'] += 1
+            continue
+        segs = [LineString([(e.verts[0].co.x, e.verts[0].co.y),
+                            (e.verts[1].co.x, e.verts[1].co.y)]) for e in comp]
+        merged = shapely.line_merge(MultiLineString(segs))
+        lines = [merged] if merged.geom_type == 'LineString' else list(merged.geoms)
+        if sum(l.length for l in lines) < width * 2.0:
+            stats['lines_too_short'] += 1
+            continue
+        if len(lines) > 1:
+            stats['lines_branching'] += 1
+        bands = [_band_polygon(l, width, stats) for l in lines]
+        zones = [l.buffer(width * margin, cap_style='flat', join_style='mitre',
+                          mitre_limit=MITRE_LIMIT) for l in lines]
+        d = by_piece.setdefault(k, {'edges': [], 'bands': [], 'zones': [], 'chain': set()})
+        d['edges'].extend(comp)
+        d['bands'].extend(bands)
+        d['zones'].extend(zones)
+        d['chain'].update(v for e in comp for v in e.verts)
+        stats['lines_used'] += 1
+    if not by_piece:
+        return dict(stats)
     tick(0.2)
 
-    # 2. absorb
-    absorb_r = width * ABSORB_MARGIN
-    index = _SegmentIndex(cedges)
-    dist = _surface_band(bm, chain, absorb_r * 1.5)
-    targetmap = {}
-    dissolve = []
-    for v in dist:
-        if v in chain or _protected(v, rlay):
+    row_edges_all = []
+    for n_done, (k, d) in enumerate(by_piece.items()):
+        P, placer, bverts, ccw, clipped = piece_data(k)
+        if P is None:
+            stats['lines_no_piece'] += 1
             continue
-        d = index.distance(v.co, v.normal, k=8)
-        if d is None or d >= absorb_r:
+        chain_set = d['chain']
+        chain_pts = [(v.co.x, v.co.y) for v in chain_set]
+        vmap_piece = {_key(v.co.x, v.co.y): v for v in bverts}
+        R = shapely.union_all(d['bands']).intersection(P)
+        if not R.is_valid:
+            R = R.buffer(0)
+        # rings of R, noded with the chain ends and placed on the outline
+        ring_lines = []
+        ring_keysets = []
+        for pg in _polys(R):
+            for ring in _ring_coords(pg):
+                if len(ring) < 3:
+                    continue
+                ring = _densify_ring(ring, chain_pts, width, stats)
+                ring = _snap_to_outline(ring, P.boundary, placer, vmap_piece, stats)
+                if len(ring) < 3:
+                    continue
+                ring_lines.append(LineString(ring + [ring[0]]))
+                ring_keysets.append([_key(*c) for c in ring])
+        if not ring_lines:
+            stats['band_empty'] += 1
             continue
-        nb = [e.other_vert(v) for e in v.link_edges if e.other_vert(v) in chain]
-        tgt = _collapse_target(v, nb) if nb else None
-        if tgt is not None:
-            targetmap[v] = tgt
-        else:
-            dissolve.append(v)
-    n0 = len(bm.verts)
-    if targetmap:
-        bmesh.ops.weld_verts(bm, targetmap=targetmap)
-    dissolve = [v for v in dissolve if v.is_valid]
-    if dissolve:
-        bmesh.ops.dissolve_verts(bm, verts=dissolve, use_face_split=False,
-                                 use_boundary_tear=False)
-    stats['absorbed'] = n0 - len(bm.verts)
-    stats['dissolved'] = len(dissolve)
-    tick(0.4)
-
-    # 3. needles on the chain
-    chain = {v for v in chain if v.is_valid}
-    near_faces = list({f for v in chain for f in v.link_faces})
-    stats['slivers'] = _collapse_slivers(bm, width * SLIVER_ALTITUDE, faces=near_faces)
-    chain = {v for v in chain if v.is_valid}
-
-    # 3b. The bevel's overlap clamp is global: one place where the offset
-    #     cannot reach `width` shrinks the whole band to that place. Two
-    #     such places are left by the absorb and are removed here.
-    #     (a) An edge from a chain vertex to a protected vertex that the weld
-    #         made shorter than `width` (an absorbed vertex carried that edge
-    #         over): the chain vertex is trimmed; an unprotected vertex that
-    #         close is welded onto the chain.
-    #     (b) A face with two chain edges: three consecutive line vertices
-    #         (the middle one gained the face when a vertex was welded onto
-    #         it). The line bends a few degrees, so the needle is taller
-    #         than _collapse_slivers removes (measured 0.003-0.05 mm, the
-    #         clamp then made the band exactly that wide). Its third edge is
-    #         dissolved, which merges it into the face beyond.
-    # One pass only: repeating it let a chain vertex swallow ring after ring
-    # (13 long edges radiating from one vertex, measured). What it leaves is
-    # handled per chain by the bevel's own clamp and shows in the report.
-    cset = {e for e in bm.edges if e.verts[0] in chain and e.verts[1] in chain}
-    targetmap = {}
-    drop = set()
-    for v in chain:
-        for e in v.link_edges:
-            if e in cset or e.calc_length() >= width * 0.9:
+        # R2 is R again, rebuilt from the rings after they were densified and
+        # snapped; it is what decides which polygonized face counts as band.
+        # polygonize wants NODED linework (see shapely.node below): handed a
+        # ring that touches itself it returns NOTHING, and the whole band
+        # inside that ring is then filtered out of `regions` — with its faces
+        # already deleted. Node first, and check the area against R.
+        R2 = shapely.polygonize(list(shapely.get_parts(
+            shapely.node(shapely.union_all(ring_lines)))))
+        R2 = shapely.union_all(list(R2.geoms)) if hasattr(R2, 'geoms') else R2
+        if R.area > 0.0 and abs(R2.area - R.area) > 0.02 * R.area:
+            stats['band_clip_area_gap'] += 1
+        chain_lines = [LineString([(e.verts[0].co.x, e.verts[0].co.y),
+                                   (e.verts[1].co.x, e.verts[1].co.y)])
+                       for e in d['edges']]
+        # --- rungs, as in _inset_pieces_2d: GEOS triangulates a polygon by
+        #     clipping ears, so a band region wider than a strip comes out as
+        #     slivers fanned from one corner. A plain fold is a strip and is
+        #     fine; where the line BRANCHES, or where two folds run closer
+        #     than 2 W and their bands merge, the region is a blob whose only
+        #     vertices are on its rim (measured on a legwear export with a
+        #     61-branch network, 2026-09-15: 9.58 mm edges and needle fans in
+        #     a mesh whose own longest flat edge is 4.83 mm). A rung from each
+        #     chain vertex to its foot on each side cuts the blob into cells
+        #     the triangulator cannot get wrong. Both ends must be EXISTING
+        #     coordinates, the rung must stay inside the band, and it must not
+        #     CROSS the fold itself — the fold's own edges have to survive.
+        rpts = [c for line in ring_lines for c in list(line.coords)[:-1]]
+        r_kd = kdtree.KDTree(len(rpts))
+        for i, c in enumerate(rpts):
+            r_kd.insert(Vector((c[0], c[1], 0.0)), i)
+        r_kd.balance()
+        chain_geom = shapely.union_all(chain_lines)
+        R2_prep = prep(R2)
+        rungs_B = []
+        for v in chain_set:
+            found = []
+            for (_c, i, dd) in sorted(r_kd.find_range(v.co, width * 1.3),
+                                      key=lambda t: t[2]):
+                if dd is None or dd <= F32_TOL:
+                    continue
+                x, y = rpts[i]
+                ux, uy = x - v.co.x, y - v.co.y
+                L = math.hypot(ux, uy)
+                if L <= 0.0:
+                    continue
+                ux, uy = ux / L, uy / L
+                if any(ux * ax + uy * ay > 0.7 for (ax, ay) in found):
+                    continue        # the side this one points at is done
+                line = LineString([(v.co.x, v.co.y), (x, y)])
+                if line.crosses(chain_geom) or not R2_prep.covers(line):
+                    stats['rungs_B_outside'] += 1
+                    continue
+                rungs_B.append(line)
+                found.append((ux, uy))
+                if len(found) >= 4:
+                    break
+        stats['rungs_B'] += len(rungs_B)
+        # polygonize needs the linework split at every node: a ring that
+        # merely PASSES THROUGH a chain end as one of its vertices is still
+        # one edge to it and does not get split (measured: 1 face instead of
+        # 2). shapely.node cuts the rings at the chain ends.
+        noded = shapely.node(shapely.union_all(ring_lines + chain_lines + rungs_B))
+        faces_geom = shapely.polygonize(list(shapely.get_parts(noded)))
+        R_prep = prep(R2)
+        regions = []
+        for pg in _polys(faces_geom):
+            if pg.area < 1e-18:
                 continue
-            o = e.other_vert(v)
-            if _protected(o, rlay):
-                drop.add(v)
-            elif o not in targetmap and _keeps_orientation(o, v):
-                targetmap[o] = v
-    chain.difference_update(drop)
-    stats['trimmed'] += len(drop)
-    targetmap = {o: v for o, v in targetmap.items() if v in chain}
-    if targetmap:
-        bmesh.ops.weld_verts(bm, targetmap=targetmap)
-        stats['absorbed'] += len(targetmap)
-    chain = {v for v in chain if v.is_valid}
-    cset = {e for e in bm.edges if e.verts[0] in chain and e.verts[1] in chain}
-    merge = set()
-    for v in chain:
-        for f in v.link_faces:
-            if sum(1 for e in f.edges if e in cset) >= 2:
-                merge.update(e for e in f.edges
-                             if e not in cset and len(e.link_faces) == 2)
-    if merge:
-        bmesh.ops.dissolve_edges(bm, edges=list(merge), use_verts=False)
-    stats['needles_merged'] = len(merge)
-    bm.normal_update()
-    chain = {v for v in chain if v.is_valid}
-    stats['line_verts'] = len(chain)
-    cedges = [e for e in bm.edges
-              if e.verts[0] in chain and e.verts[1] in chain and len(e.link_faces) == 2]
-    if not cedges:
-        return stats
-    tick(0.5)
-
-    # 4. bevel: 2 segments -> middle row on the crease, outer rows at +-width.
-    #    One call per connected line: the overlap clamp is global within a
-    #    call, so a single tight spot would otherwise shrink every band
-    #    (19% of Width measured with 69 lines in one call).
-    adj = {}
-    for e in cedges:
-        for v in e.verts:
-            adj.setdefault(v, []).append(e)
-    seen = set()
-    groups = []
-    for e in cedges:
-        if e in seen:
+            if R_prep.contains(pg.representative_point()):
+                regions.append(pg)
+        stats['band_regions'] += len(regions)
+        if not regions:
+            stats['band_empty'] += 1
             continue
-        stack = [e]
-        seen.add(e)
-        comp = []
-        while stack:
-            x = stack.pop()
-            comp.append(x)
-            for v in x.verts:
-                for y in adj[v]:
-                    if y not in seen:
-                        seen.add(y)
-                        stack.append(y)
-        groups.append(comp)
-    r = {'faces': [], 'verts': [], 'edges': []}
-    widths = []
-    for comp in groups:
-        comp = [e for e in comp if e.is_valid]
-        if not comp:
-            continue
-        rg = bmesh.ops.bevel(bm, geom=comp, offset=width, offset_type='OFFSET',
-                             segments=2, profile=profile, affect='EDGES',
-                             clamp_overlap=True, loop_slide=True,
-                             mark_seam=False, mark_sharp=False)
-        for k in r:
-            r[k].extend(rg[k])
-        gf = set(rg['faces'])
-        mid = [v for v in rg['verts']
-               if v.is_valid and v.link_faces and all(f in gf for f in v.link_faces)]
-        ds = sorted((e.other_vert(v).co - v.co).length for v in mid for e in v.link_edges
-                    if any(f not in gf for f in e.other_vert(v).link_faces))
-        if ds:
-            widths.append(ds[len(ds) // 2])
-    stats['lines'] = len(groups)
-    if widths:
-        widths.sort()
-        stats['width_min'] = widths[0]
-        stats['width_achieved'] = widths[len(widths) // 2]
-    bevel_faces = set(r['faces'])
-    stats['bevel_faces'] = len(bevel_faces)
-    bm.normal_update()
-    tick(0.7)
-
-    # 5. outer rows sharp, re-triangulate, smooth
-    n_sharp = 0
-    for e in r['edges']:
-        if not e.is_valid or len(e.link_faces) != 2:
-            continue
-        if (e.link_faces[0] in bevel_faces) != (e.link_faces[1] in bevel_faces):
-            e.smooth = False
-            e[rlay] = 1
-            n_sharp += 1
-    stats['sharp_edges'] = n_sharp
-    # The fold's own edges are gone with the bevel, and the KIND tag that
-    # identified them is copied onto whatever the bevel interpolates from
-    # them, outer rows and rungs alike (5606 tagged edges from 2857 fold
-    # edges measured on a jacket). Re-tag so ONLY the middle row carries
-    # KIND_CREASE: that row is the fold line the 2D overlay and Outline Snap
-    # read back (uv_seam_guide.analysis.find_crease_segments_flat). Middle
-    # row = an edge between two band faces whose ends touch no row edge (a
-    # rung has one end on a row).
-    klay = bm.edges.layers.int.get(KIND_LAYER)
-    mid_edges = set()
-    if klay is not None:
-        def _on_row(v):
-            return any(x[rlay] for x in v.link_edges)
-        for f in bevel_faces:
-            if not f.is_valid:
+        band_geom = shapely.union_all(regions)
+        zone_geom = shapely.union_all(d['zones'])
+        band_prep = prep(band_geom)
+        zone_prep = prep(zone_geom)
+        # --- faces to delete
+        reach = width * margin + 3.0 * width
+        bm.verts.ensure_lookup_table()
+        bm.verts.index_update()
+        near = _surface_band(bm, list(chain_set), reach)
+        cand = {f for v in near for f in v.link_faces if piece_of.get(f) == k}
+        removed = []
+        for f in cand:
+            if f[blay]:
                 continue
-            for e in f.edges:
-                if (len(e.link_faces) == 2
-                        and all(x in bevel_faces for x in e.link_faces)
-                        and not _on_row(e.verts[0]) and not _on_row(e.verts[1])):
-                    e[klay] = KIND_CREASE
-                    mid_edges.add(e)
+            if clipped and any(v.is_boundary for v in f.verts):
+                continue    # the strip of Inset Pieces is left alone
+            hit = False
+            for v in f.verts:
+                if v in chain_set or v.is_boundary:
+                    continue
+                if zone_prep.contains(Point(v.co.x, v.co.y)):
+                    hit = True
+                    break
+            if not hit:
+                tri = Polygon([(v.co.x, v.co.y) for v in f.verts])
+                if band_prep.intersects(tri) and band_geom.intersection(tri).area > 1e-16:
+                    hit = True
+            if hit:
+                removed.append(f)
+        stats['faces_removed'] += len(removed)
+        if not removed:
+            stats['band_no_faces'] += 1
+            continue
+        hole = shapely.union_all([Polygon([(v.co.x, v.co.y) for v in f.verts])
+                                  for f in removed])
+        verts = list({v for f in removed for v in f.verts})
+        bmesh.ops.delete(bm, geom=removed, context='FACES_ONLY')
+        vmap = {}
+        for v in verts:
+            if v.is_valid:
+                vmap[_key(v.co.x, v.co.y)] = v
+        for v in bverts:
+            if v.is_valid:
+                vmap[_key(v.co.x, v.co.y)] = v
+        vmap.update({kk: v for kk, v in vmap_piece.items() if v.is_valid})
+        for keys, line in zip(ring_keysets, ring_lines):
+            for kk, (x, y) in zip(keys, list(line.coords)[:-1]):
+                if kk not in vmap:
+                    vmap[kk] = bm.verts.new((x, y, 0.0))
+                    stats['row_verts'] += 1
+        gap = hole.difference(band_geom)
+        if not gap.is_valid:
+            gap = gap.buffer(0)
+        # The gap is the part of the deleted patch the band does not cover.
+        # Its own interior vertices went with the faces, so on a coarse mesh
+        # it is a ring several triangles wide with nothing inside it and the
+        # CDT bridges it with 6-8 mm diagonals. Same rungs as G in
+        # _inset_pieces_2d: band rim vertex -> nearest surviving vertex of the
+        # hole's rim.
+        hole_verts = [v for v in verts if v.is_valid and v.link_faces]
+        rungs_R = []
+        if not gap.is_empty and hole_verts:
+            h_kd = kdtree.KDTree(len(hole_verts))
+            for i, v in enumerate(hole_verts):
+                h_kd.insert(v.co, i)
+            h_kd.balance()
+            gap_prep = prep(gap)
+            for (x, y) in rpts:
+                _co, i, dd = h_kd.find(Vector((x, y, 0.0)))
+                if dd is None or dd <= 0.0 or dd > 3.0 * width:
+                    continue
+                hv = hole_verts[i]
+                line = LineString([(x, y), (hv.co.x, hv.co.y)])
+                if gap_prep.covers(line):
+                    rungs_R.append(line)
                 else:
+                    stats['rungs_R_outside'] += 1
+        stats['rungs_R'] += len(rungs_R)
+        gap_regions = _cut_regions(gap, rungs_R, stats, 'R')
+        # a rung crossing, or a node the arrangement put on a rim edge, is a
+        # coordinate no ring carried: give it a vertex before the CDT asks
+        _register_region_coords(bm, regions + gap_regions, vmap, stats)
+        band_faces = []
+        for pg in regions:
+            band_faces.extend(_cdt_faces(bm, pg, vmap, ccw, stats, 'B'))
+        gap_faces = []
+        for pg in gap_regions:
+            gap_faces.extend(_cdt_faces(bm, pg, vmap, ccw, stats, 'R'))
+        for f in band_faces:
+            f[blay] = 1
+        stats['band_faces'] += len(band_faces)
+        stats['gap_faces'] += len(gap_faces)
+        # rows = ring edges that are neither chain edges nor outline edges
+        for keys in ring_keysets:
+            n = len(keys)
+            for i in range(n):
+                a = vmap.get(keys[i])
+                b = vmap.get(keys[(i + 1) % n])
+                if a is None or b is None or a is b:
+                    continue
+                if a in chain_set and b in chain_set:
+                    continue
+                if a.is_boundary and b.is_boundary:
+                    continue
+                e = bm.edges.get([a, b])
+                if e is None:
+                    stats['row_edges_missing'] += 1
+                    continue
+                e[rlay] = 1
+                if sharp_outer:
+                    e.smooth = False
+                row_edges_all.append(e)
+        for f in band_faces:
+            for e in f.edges:
+                if not (e.verts[0] in chain_set and e.verts[1] in chain_set):
                     e[klay] = KIND_NONE
-    stats['crease_edges'] = len(mid_edges)
-    # the dissolve's ngons all touch the band, so this is every new polygon
-    polys = list({f for v in r['verts'] if v.is_valid for f in v.link_faces
-                  if len(f.verts) > 3})
-    if polys:
-        bmesh.ops.triangulate(bm, faces=polys, quad_method='BEAUTY', ngon_method='BEAUTY')
-        for f in bm.faces:
-            f.smooth = True
+        # cracks between the band, the gap ring and the untouched faces
+        # around (see repair_t_junctions)
+        new_edges = {e for f in band_faces + gap_faces if f.is_valid for e in f.edges}
+        # ... and the edges of the surviving faces around the hole (the
+        # strip's row edges included): a band corner placed on the row can
+        # leave the row edge on the strip side unsplit
+        around = {e for f in cand if f.is_valid for e in f.edges}
+        set_B = set(band_faces)
+        set_R = set(gap_faces)
+
+        def _region_of(f):
+            return 0 if f in set_B else (1 if f in set_R else 2)
+
+        outline = {v for e in new_edges | around if e.is_valid for v in e.verts
+                   if v.is_boundary and not any(x[rlay] for x in v.link_edges)}
+        edges_all = []
+        for e in new_edges | around:
+            if not e.is_valid or (e.verts[0] in outline and e.verts[1] in outline):
+                continue
+            lf = e.link_faces
+            if len(lf) < 2 or _region_of(lf[0]) != _region_of(lf[1]):
+                edges_all.append(e)
+        near_verts = list({v for e in edges_all for v in e.verts if v.link_faces})
+        repair_t_junctions(bm, edges_all, near_verts, 1e-6, stats, 'L')
+        tick(0.2 + 0.7 * (n_done + 1) / len(by_piece))
+    stats['row_edges'] = len(row_edges_all)
+    for pl in placers:
+        stats['outline_split_retri'] += pl.finish()
+    loose_v = [v for v in bm.verts if not v.link_faces]
+    stats['loose_verts_removed'] = len(loose_v)
+    if loose_v:
+        bmesh.ops.delete(bm, geom=loose_v, context='VERTS')
+    wire = [e for e in bm.edges if not e.link_faces]
+    stats['wire_edges_removed'] = len(wire)
+    if wire:
+        bmesh.ops.delete(bm, geom=wire, context='EDGES')
+    for f in bm.faces:
+        f.smooth = True
     bm.normal_update()
     tick(0.95)
-    return stats
+    return dict(stats)
+
+
+def _band_polygon(line, width, stats):
+    """The band of `line`: its two offset curves at +-W, each densified with a
+    foot per chain vertex, closed with flat caps.
+
+    buffer() gives the same outline, but the feet were then added by
+    projecting each chain vertex onto the WHOLE ring, and a vertex exactly
+    midway between the two sides projects onto one side only: the other side
+    kept its 2-3 simplified vertices and the CDT fanned the entire band from
+    them (78 mm edges, a degree-79 vertex, measured)."""
+    from shapely.geometry import Polygon
+
+    chain_pts = list(line.coords)
+    sides = []
+    for sign in (+1.0, -1.0):
+        oc = line.offset_curve(sign * width, join_style='mitre', mitre_limit=MITRE_LIMIT)
+        if oc.is_empty or oc.geom_type != 'LineString' or len(oc.coords) < 2:
+            sides = None
+            break
+        sides.append(_densify_side(oc, chain_pts, width, stats))
+    fallback = line.buffer(width, cap_style='flat', join_style='mitre',
+                           mitre_limit=MITRE_LIMIT)
+    if sides is None:
+        stats['band_buffer_fallback'] += 1
+        return fallback
+    left, right = sides
+    # the two curves may run in the same or in opposite directions depending
+    # on the GEOS version: try both closures, keep the valid one whose area
+    # matches the buffer
+    best = None
+    for r in (list(reversed(right)), list(right)):
+        ring = left + r
+        if len(ring) < 3:
+            continue      # a side collapsed to one point (a very short chain)
+        pg = Polygon(ring)
+        if pg.is_valid:
+            err = abs(pg.area - fallback.area)
+            if best is None or err < best[0]:
+                best = (err, pg)
+    if best is None or best[0] > 0.05 * fallback.area:
+        stats['band_buffer_fallback'] += 1
+        return fallback
+    return best[1]
+
+
+def _densify_side(side, chain_pts, width, stats):
+    """One offset curve of a chain, with the foot of EVERY chain vertex
+    inserted (merged within 5 % of W). Returns the coordinate list."""
+    from shapely.geometry import Point
+
+    pts = [(side.project(Point(c)), c) for c in side.coords]
+    for c in chain_pts:
+        p = Point(c)
+        if side.distance(p) > width * 1.5:
+            continue
+        s = side.project(p)
+        q = side.interpolate(s)
+        pts.append((s, (q.x, q.y)))
+    pts.sort(key=lambda t: t[0])
+    tol = width * 0.05
+    out = []
+    last = None
+    for s, c in pts:
+        if last is not None and s - last < tol:
+            stats['side_foot_merged'] += 1
+            continue
+        out.append(c)
+        last = s
+    return out
+
+
+def _densify_ring(ring_coords, chain_pts, width, stats):
+    """Insert the foot of every nearby chain vertex onto the ring (GEOS
+    simplifies before buffering, so the offset comes back with fewer vertices
+    than the chain). A foot within 1 nm of a chain vertex — a chain END, which
+    lies on the flat cap — is replaced by the chain vertex's exact coordinate
+    so the polygonize is properly noded there.
+
+    Everything here is ordered by the ring's OWN arc length, walked segment by
+    segment. `LineString.project()` returns the arc length of the point
+    nearest ON THE WHOLE RING, and the ring of a fold band runs back down the
+    other side of the fold 2 W away — and closer still where two folds are
+    within 2 W of each other and their bands merged. A coordinate then sorts
+    into the wrong place, and the ring comes back SELF-INTERSECTING: measured
+    on a legwear export, `shapely.polygonize` returned nothing at all for such
+    a ring, so the whole 1475 mm2 band it enclosed was dropped from the clip
+    while its faces had already been deleted — the fold there was rebuilt as
+    plain gap and 13 of its edges were swept away with the loose vertices.
+
+    For the same reason a chain vertex gets one foot per LOCAL approach of the
+    ring instead of one at the global nearest point: the two sides of the band
+    are both exactly W away, so a single projection densifies one of them and
+    leaves the other with whatever vertices GEOS's simplification left it
+    (measured: 9.58 mm ring edges opposite a fully densified side)."""
+    import shapely
+    from shapely.geometry import LineString, Point
+
+    n = len(ring_coords)
+    chain_set = set(chain_pts)
+    segs = [LineString([ring_coords[i], ring_coords[(i + 1) % n]])
+            for i in range(n)]
+    cum = [0.0] * (n + 1)
+    for i, s in enumerate(segs):
+        cum[i + 1] = cum[i] + s.length
+    L = cum[n]
+    pts = [(cum[i], c) for i, c in enumerate(ring_coords)]
+    tree = shapely.STRtree(segs)
+    reach = width * 1.5
+    for c in chain_pts:
+        p = Point(c)
+        idx = sorted(int(i) for i in tree.query(p.buffer(reach)))
+        if not idx:
+            continue
+        # contiguous runs of candidate segments = one approach of the ring to
+        # this vertex; the ring is closed, so a run can wrap around the end
+        runs = []
+        for i in idx:
+            if runs and i == runs[-1][-1] + 1:
+                runs[-1].append(i)
+            else:
+                runs.append([i])
+        if len(runs) > 1 and runs[0][0] == 0 and runs[-1][-1] == n - 1:
+            runs[0] = runs.pop() + runs[0]
+        for run in runs:
+            best = None
+            for i in run:
+                dd = segs[i].distance(p)
+                if dd <= reach and (best is None or dd < best[0]):
+                    best = (dd, i)
+            if best is None:
+                continue
+            dd, i = best
+            t = segs[i].project(p)
+            q = segs[i].interpolate(t)
+            s = cum[i] + t
+            if dd < 1e-9:
+                pts.append((s, c))      # exact: the chain end on the cap
+                stats['line_end_noded'] += 1
+            else:
+                pts.append((s, (q.x, q.y)))
+    pts.sort(key=lambda t: t[0])
+    tol = width * 0.05
+    out = []
+    last = None
+    for s, c in pts:
+        if last is not None and s - last[0] < tol:
+            # keep an exact chain coordinate over an interpolated foot
+            if c in chain_set and last[1] not in chain_set:
+                out[-1] = c
+                last = (s, c)
+            else:
+                stats['line_foot_merged'] += 1
+            continue
+        out.append(c)
+        last = (s, c)
+    if len(out) > 3 and (L - pts[-1][0]) + pts[0][0] < tol and out[0] not in chain_set:
+        out.pop(0)
+    return out
+
+
+def _snap_to_outline(coords, P_boundary, placer, vmap, stats):
+    """Ring coordinates that lie on the clip boundary but are not vertices of
+    it (the band was clipped by an outline / row edge) are placed on it by
+    `placer` (snap to a near vertex, else a paired split); the coordinate is
+    replaced by the vertex's exact position and the vertex is registered in
+    `vmap`."""
+    from shapely.geometry import Point
+
+    out = []
+    for (x, y) in coords:
+        if _key(x, y) in vmap:
+            out.append((x, y))
+            continue
+        if P_boundary.distance(Point(x, y)) < 1e-9:
+            v = placer.place(x, y)
+            if v is not None:
+                vmap[_key(v.co.x, v.co.y)] = v
+                out.append((v.co.x, v.co.y))
+                continue
+        out.append((x, y))
+    dedup = []
+    for c in out:
+        if not dedup or _key(*c) != _key(*dedup[-1]):
+            dedup.append(c)
+    if len(dedup) > 1 and _key(*dedup[0]) == _key(*dedup[-1]):
+        dedup.pop()
+    return dedup
+
+
+class OutlinePlacer:
+    """Puts a band corner ON the piece's clip boundary without breaking the
+    sewn 1:1 pairs.
+
+    A band clipped by the boundary ends with two corners on boundary edges.
+    If a boundary vertex is within `snap` of the corner, the corner is moved
+    onto it (a T-junction is never left). Otherwise the edge is split there —
+    and so is its sewn TWIN on the neighbouring piece (the boundary edge
+    whose two ends coincide with this one's in 3D), at the same parameter, so
+    both sides gain one vertex at the same 3D point and the pairing stays
+    exact. A free edge (no twin), and every row edge (the clip boundary after
+    Inset Pieces, which is sewn to nothing), is simply split. Faces turned
+    into quads by a split are re-triangulated by `finish`."""
+
+    def __init__(self, bm, bedges, bverts, basis_lay, width, twin_index, stats):
+        self.bm = bm
+        self.stats = stats
+        self.basis = basis_lay
+        self.twins = twin_index
+        self.snap = width * 0.5
+        self.bverts = list(bverts)
+        self.vkd = kdtree.KDTree(len(self.bverts))
+        for i, v in enumerate(self.bverts):
+            self.vkd.insert(v.co, i)
+        self.vkd.balance()
+        self.edges = [e for e in bedges if e.is_valid]
+        self.ekd = kdtree.KDTree(len(self.edges))
+        maxlen = 0.0
+        for i, e in enumerate(self.edges):
+            self.ekd.insert((e.verts[0].co + e.verts[1].co) * 0.5, i)
+            maxlen = max(maxlen, e.calc_length())
+        self.ekd.balance()
+        self.radius = 0.5 * maxlen + 1e-6
+        self.touched = set()
+
+    def _bkey(self, v):
+        return tuple(round(c, 7) for c in v[self.basis])
+
+    def place(self, x, y):
+        """Vertex for an on-boundary ring coordinate, or None."""
+        p = Vector((x, y, 0.0))
+        _co, i, d = self.vkd.find(p)
+        if d is not None and d <= self.snap:
+            self.stats['line_end_snapped'] += 1
+            return self.bverts[i]
+        best = None
+        for (_c, i, _d) in self.ekd.find_range(p, self.radius):
+            e = self.edges[i]
+            if not e.is_valid:
+                continue
+            a, b = e.verts[0].co, e.verts[1].co
+            t = b - a
+            L = t.length
+            if L < 1e-12:
+                continue
+            u = (p - a).dot(t) / (L * L)
+            if u <= 1e-6 or u >= 1.0 - 1e-6:
+                continue
+            dd = (p - (a + t * u)).length
+            if best is None or dd < best[0]:
+                best = (dd, e, u)
+        if best is None or best[0] > 1e-6:
+            self.stats['line_end_unplaced'] += 1
+            return None
+        _dd, e, u = best
+        va, vb = e.verts[0], e.verts[1]
+        # the twin: a boundary edge whose ends coincide with va / vb in 3D
+        twin = None
+        for ta in self.twins.get(self._bkey(va), ()):
+            if ta is va or not ta.is_valid:
+                continue
+            for te in ta.link_edges:
+                if not te.is_boundary:
+                    continue
+                tb = te.other_vert(ta)
+                if tb is not vb and self._bkey(tb) == self._bkey(vb):
+                    twin = (te, ta)
+                    break
+            if twin:
+                break
+        self.touched.update(e.link_faces)
+        ne, nv = bmesh.utils.edge_split(e, va, u)
+        nv.co = p
+        nv[self.basis] = va[self.basis].lerp(vb[self.basis], u)
+        self.edges.append(ne)
+        if twin is not None:
+            te, ta = twin
+            tb = te.other_vert(ta)
+            self.touched.update(te.link_faces)
+            tne, tnv = bmesh.utils.edge_split(te, ta, u)
+            tnv.co = ta.co.lerp(tb.co, u)
+            tnv[self.basis] = ta[self.basis].lerp(tb[self.basis], u)
+            self.twins.setdefault(self._bkey(tnv), []).append(tnv)
+            self.stats['outline_split_pairs'] += 1
+        else:
+            self.stats['outline_split_free'] += 1
+        self.twins.setdefault(self._bkey(nv), []).append(nv)
+        return nv
+
+    def finish(self):
+        polys = [f for f in self.touched if f.is_valid and len(f.verts) > 3]
+        if polys:
+            bmesh.ops.triangulate(self.bm, faces=polys, quad_method='BEAUTY',
+                                  ngon_method='BEAUTY')
+        return len(polys)
 
 
 # ---------------------------------------------------------------------------
-# 2. tagging (Find Folds)
+# 1. tagging (Find Folds)
 
 def tag_creases_by_angle(bm, min_angle_deg):
     """Tag 2-face edges with dihedral >= min angle as creases. Returns
