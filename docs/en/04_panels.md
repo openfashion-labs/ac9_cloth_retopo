@@ -218,7 +218,9 @@ travels one way, Retopo → Mirror: hiding on the Mirror alone leaves the Retopo
 undone by the next sync. Blender only draws geometry as hidden in Edit Mode, so this shows when
 the Mirror is in Edit Mode as well (see "Put the Retopo AND the Mirror in Edit Mode together" in
 [03_workflow.md](03_workflow.md)); a Mirror in Object Mode keeps drawing the whole mesh.
-Selection is not touched.
+Selection is not touched. **Nothing is synced while Subdiv Preview is on** — the subdivided Mirror has no vertex
+correspondence with the Retopo — so turn the preview off, or apply **Subdivide** to the Retopo
+first (a known gap, to be closed later).
 
 ### Separation Settings (sub-panel)
 
@@ -318,7 +320,7 @@ The **Seam Status** toggle only ever comes on with the **Status** preset, and wh
 | **Marks** | a refresh button for **Analyze Anchors** in the header. **Anchors** / **Corners** (Experimental) / **Pins** (Experimental). Turning on **Anchors** without an analysis shows a red warning. Once analyzed, the anchor count and span count are shown |
 | **Ghosts** | a manual refresh (**Refresh Ghosts**) and **×** (**Clear Ghost Points**) in the header. **Selected Only** / **Points** (enables **Only Unplaced** and **Orphan Rings** when on) / **Lines** (enables **Unplaced Lines Only** when on) / **Snap Radius** |
 | **Status** | **Vertex Counts** / **Seam Status** / **Boundary Flags** |
-| **Mirror** | **Selection Link** — draws orange markers at the live Guide projection for a 2D selection, or at the Refresh-time 2D source position for a Mirror selection. Works for vertex, edge, face, loop, and shortest-path selections. A vertex created directly on the disposable Mirror has no source marker until Refresh rebuilds it |
+| **Mirror** | **Selection Link** — draws orange markers at the live Guide projection for a 2D selection, or at the Refresh-time 2D source position for a Mirror selection. Works for vertex, edge, face, loop, and shortest-path selections. A vertex created directly on the disposable Mirror has no source marker until Refresh rebuilds it. Markers follow the **active object's** selection only (the one selected last), never both at once. A 2D selection's markers use the Guide projection cache, so **right after opening a file they do not appear until Refresh has been pressed once** (likewise after editing or swapping the Guide). A Mirror selection's markers need no cache and always show |
 | **Guide** | an **Islands** slider (**Alpha**) and **Bake** / **×** — detects the Guide's UV islands, writes them to a color attribute, and builds a simple material to display it. Not a GPU overlay, but it's kept here since it answers the same question of "what does the Guide look like" |
 
 **Seams (cyan)** and **Free Edges (yellow)** split the pattern outline in two in the flat layout: cyan for edges sewn to another panel, yellow for the free ones (hems, necklines, openings). A CLO export need not carry a single `use_seam` flag — measured on a production Guide, 5,133 boundary edges and 0 `use_seam` — in which case the yellow lines are the only place free edges show up in the flat layout. The 3D-side **Outline (white)** draws every open-boundary edge of the Guide (plus any UV-seam-marked edge), so it appears whether or not `use_seam` is set.

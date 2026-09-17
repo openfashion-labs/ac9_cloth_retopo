@@ -101,8 +101,10 @@ easy to never think of, so here it is as a procedure.
 
 1. Select **both** the Retopo and the Mirror, press **Tab**. Both enter Edit Mode.
 2. In the 3D viewport, click a vertex on the Mirror to point at the place you want to fix.
-   The **Selection Link** overlay marks where that vertex sits in the 2D layout, in orange
-   (and the other way round).
+   The **Selection Link** overlay marks where that vertex sits in the 2D layout, in orange.
+   Markers follow the active object's selection only (the one you selected last). Make the Retopo
+   active and it works the other way round (2D → Mirror) — but that direction needs the Guide
+   projection cache, so right after opening a file it shows nothing until **Refresh** has run once.
 3. Edit the **Retopo** in the 2D viewport.
 4. Press **Refresh**: the Mirror catches up without either object leaving Edit Mode.
 
@@ -115,6 +117,8 @@ back). Use it to work on a couple of pattern pieces in a crowded area. It travel
 Retopo → Mirror: hiding on the Mirror alone changes nothing on the Retopo and is undone by the
 next sync. Blender only draws geometry as hidden in Edit Mode, so **a Mirror in Object Mode looks
 the same as always** — the flags are there, and you see them the moment you Tab in.
+**While Subdiv Preview is on, hidden geometry is not synced**: the subdivided Mirror has no vertex
+correspondence with the Retopo.
 
 ![The 3D View panel and the 3D Mirror built from the flat Retopo. `Retopology_AC93DMirror` in the outliner is the object itself.](../images/03_3dview_mirror.png)
 

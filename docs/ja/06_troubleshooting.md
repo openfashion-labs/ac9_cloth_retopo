@@ -137,6 +137,22 @@ Number of Vertices を 4、種別を **Greater Than** にすると選べます�
 
 **まとめ**: 押し出しはギャップの半分程度（4 mm ギャップなら 2 mm）、レイ長の上限はその 2〜3 倍。単位はメートルなので、Blender の入力欄には `0.002` と `0.006` のように入れます。
 
+## Selection Link のマーカーが出ない
+
+**症状**: Retopo と Mirror を両方 Edit Mode にして頂点を選んでも、相手側に橙のマーカーが出ない。出ることもある。
+
+**原因**: 2 つあります。(1) マーカーは**アクティブなオブジェクト**（最後に選んだ方）の選択にだけ出ます。Mirror がアクティブなら Mirror → 2D だけ、Retopo がアクティブなら 2D → Mirror だけです。(2) 2D → Mirror の向きは Guide の投影キャッシュを使い、**ファイルを開いた直後は空**です。**Refresh** か投影を 1 回通すと温まり、Guide を編集・差し替えするとまた空になります。Mirror → 2D の向きは Refresh 時に記録した 2D 位置を読むだけなので、いつでも出ます。
+
+**対処**: 見たい向きの元になるオブジェクトをアクティブにする（Ctrl+クリックで最後に選ぶ）。2D → Mirror が出ないときは **3D View → Mirror → Refresh** を 1 回押す。
+
+## H で隠したのに Mirror が隠れない
+
+**症状**: Retopo の Edit Mode で **H** を押しても、Mirror は全部描かれたまま。
+
+**原因**: Blender は Edit Mode でしか隠しを描画しません。Mirror が Object Mode だと、隠しフラグは写っていても見た目は変わりません。また **Subdiv Preview がオンの間は同期そのものが止まります**（分割後の Mirror は頂点の対応が取れないため）。
+
+**対処**: Retopo と Mirror を両方選んで **Tab**（両方 Edit Mode）。Subdiv Preview はオフにするか、Retopo に **Subdivide** を適用してから使う。向きは Retopo → Mirror の一方向で、Mirror 側で隠しても Retopo には返りません。
+
 ## Mirror が古いままに見える
 
 **症状**: 2D を編集したのに Mirror の 3D 形状が前のまま。

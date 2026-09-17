@@ -211,7 +211,7 @@ Mirror（2D リトポの閲覧専用 3D 表示）と、Guide を平面で見る�
 
 **Weld Seam Vertices**（既定 OFF）は、そのうえで同じ位置になった頂点を 1 個にマージします。既定が OFF なのは、Final がこの後ベイクへ回るからです。ベイクでは縫い目の両側が別頂点であってほしく、溶接済みのものを UV アイランドごとに分け直すのは手間ですが、未溶接のものを溶接するのは Merge by Distance 一発です。戻しにくい側を既定にしない、という置き方です。
 
-**隠しジオメトリは Mirror に追従します。** Retopo が Edit Mode にある間、**H** / **Alt+H** で隠した頂点 / 辺 / 面が、ボタンを押さなくても Mirror の同じ場所に反映されます（**Refresh** も最後に同じことをするので、Object Mode で隠した状態から入っても揃います）。向きは Retopo → Mirror の一方向で、Mirror 側だけ隠しても Retopo は変わらず、次の同期で Retopo の状態に戻されます。Blender は Edit Mode でしか隠しを描画しないため、見た目に効くのは Mirror も Edit Mode に入れているとき（[03_workflow.md](03_workflow.md) の「Retopo と Mirror を両方 Edit Mode にする」）で、Object Mode の Mirror はこれまでどおりメッシュ全体を描きます。選択には触りません。
+**隠しジオメトリは Mirror に追従します。** Retopo が Edit Mode にある間、**H** / **Alt+H** で隠した頂点 / 辺 / 面が、ボタンを押さなくても Mirror の同じ場所に反映されます（**Refresh** も最後に同じことをするので、Object Mode で隠した状態から入っても揃います）。向きは Retopo → Mirror の一方向で、Mirror 側だけ隠しても Retopo は変わらず、次の同期で Retopo の状態に戻されます。Blender は Edit Mode でしか隠しを描画しないため、見た目に効くのは Mirror も Edit Mode に入れているとき（[03_workflow.md](03_workflow.md) の「Retopo と Mirror を両方 Edit Mode にする」）で、Object Mode の Mirror はこれまでどおりメッシュ全体を描きます。選択には触りません。**Subdiv Preview がオンの間は同期しません** — 分割後の Mirror は Retopo と頂点の対応が取れないためで、Preview を切るか、Retopo に **Subdivide** を適用してから使ってください（将来の課題）。**Subdiv Preview がオンの間は同期しません** — 分割後の Mirror は Retopo と頂点の対応が取れないためで、Preview を切るか、Retopo に **Subdivide** を適用してから使ってください（将来の課題）。
 
 ### Separation Settings（子パネル）
 
@@ -309,7 +309,7 @@ OFF にすると毎フレームの描画コールバックが冒頭で打ち切�
 | **Marks** | 見出しに **Analyze Anchors** の更新ボタン。**Anchors** / **Corners**（Experimental）/ **Pins**（Experimental）。**Anchors** を ON にしたのに解析が無いと赤い警告が出る。解析済みならアンカー数とスパン数が出る |
 | **Ghosts** | 見出しに手動更新（**Refresh Ghosts**）と **×**（**Clear Ghost Points**）。**Selected Only** / **Points**（ON のとき **Only Unplaced** と **Orphan Rings** が有効）/ **Lines**（ON のとき **Unplaced Lines Only** が有効）/ **Snap Radius** |
 | **Status** | **Vertex Counts** / **Seam Status** / **Boundary Flags** |
-| **Mirror** | **Selection Link** — 2D側の選択は現在のGuide投影位置、Mirror側の選択はRefresh時に記録した生成元2D位置へオレンジのマーカーを描く。頂点 / 辺 / 面 / ループ / 最短経路の選択に対応。使い捨てのMirror上へ直接追加した頂点には生成元がないため、Refreshで作り直すまでマーカーを描かない |
+| **Mirror** | **Selection Link** — 2D側の選択は現在のGuide投影位置、Mirror側の選択はRefresh時に記録した生成元2D位置へオレンジのマーカーを描く。頂点 / 辺 / 面 / ループ / 最短経路の選択に対応。使い捨てのMirror上へ直接追加した頂点には生成元がないため、Refreshで作り直すまでマーカーを描かない。マーカーが出るのは**アクティブなオブジェクト**（最後に選んだ方）の選択だけで、両方同時には出ない。2D側の選択のマーカーは Guide の投影キャッシュを使うので、**ファイルを開いた直後は Refresh を 1 回押すまで出ない**（Guide を編集・差し替えした後も同じ）。Mirror側の選択のマーカーはキャッシュ不要で常に出る |
 | **Guide** | **Islands** スライダ（**Alpha**）と **Bake** / **×** — Guide の UV アイランドを検出して頂点色属性に書き、それを表示する簡単なマテリアルを作る。GPU オーバーレイではないが「Guide に何が見えているか」という同じ問いなので、ここに置かれている |
 
 **Seams (cyan)** と **Free Edges (yellow)** は平面レイアウト上で型紙輪郭を二分します。シアン = 相手のある縫い目、黄 = 縫い相手のないフリー辺（裾・襟ぐり・開き）。CLO 書き出しは `use_seam` フラグを 1 本も持たないことがあり（実測: 境界辺 5,133 に対し `use_seam` 0）、その場合フリー辺は黄の線でしか見えません。3D 側の **Outline (white)** は Guide の開いた境界辺すべて（＋ UV シームが付いた辺）を描くので、`use_seam` の有無に関わらず出ます。

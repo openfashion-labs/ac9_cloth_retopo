@@ -136,6 +136,22 @@ Without a limit, a ray that grazes past its own surface carries on across the ga
 
 **In short**: extrusion around half the gap (2 mm for a 4 mm gap), ray length two or three times that. The fields are in metres, so type `0.002` and `0.006`.
 
+## Selection Link markers don't appear
+
+**Symptom**: with both the Retopo and the Mirror in Edit Mode, selecting vertices shows no orange markers on the other object — or only sometimes.
+
+**Cause**: two things. (1) Markers follow the **active object's** selection only (the one selected last): Mirror active gives Mirror → 2D only, Retopo active gives 2D → Mirror only. (2) The 2D → Mirror direction uses the Guide projection cache, which is **empty right after opening a file**. One **Refresh** (or any projection) fills it; editing or swapping the Guide empties it again. The Mirror → 2D direction only reads the 2D positions recorded at Refresh time, so it always shows.
+
+**Fix**: make the object you want to select on the active one (Ctrl+click it last). If 2D → Mirror shows nothing, press **3D View → Mirror → Refresh** once.
+
+## Hidden geometry (H) doesn't hide on the Mirror
+
+**Symptom**: pressing **H** in the Retopo's Edit Mode leaves the Mirror fully drawn.
+
+**Cause**: Blender only draws geometry as hidden in Edit Mode; a Mirror in Object Mode carries the flags but looks unchanged. Also, **while Subdiv Preview is on the sync itself is skipped** (the subdivided Mirror has no vertex correspondence with the Retopo).
+
+**Fix**: select both the Retopo and the Mirror and press **Tab** (both in Edit Mode). Turn Subdiv Preview off, or apply **Subdivide** to the Retopo first. The sync is one way, Retopo → Mirror; hiding on the Mirror does not travel back.
+
 ## The Mirror looks stale
 
 **Symptom**: after editing in 2D, the Mirror's 3D shape still looks like the old one.
