@@ -166,6 +166,11 @@ class AC9_OT_FinalizeRetopo(bpy.types.Operator):
             for coll in colls:
                 coll.objects.link(final)
             final.matrix_world = retopo.matrix_world.copy()
+            # data.copy() names the mesh after the retopo with a numeric
+            # suffix, so the deliverable's object and its mesh read as two
+            # different things in the Properties editor. Blender appends its
+            # own suffix here too if the name is taken, and both stay in step.
+            me.name = final.name
 
             # Strip everything the copy inherited from the retopo: ShapeKeys,
             # then AC9 attribute layers and custom properties.
