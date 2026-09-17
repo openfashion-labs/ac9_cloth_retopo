@@ -18,7 +18,14 @@ CLO / Marvelous Designer で作った衣装メッシュを、平面に展開し�
 
 ## インストール
 
-ZIP を **Edit > Preferences > Add-ons > Install from Disk** から指定して有効化します。
+1. [最新リリースのページ](https://github.com/openfashion-labs/ac9_cloth_retopo/releases/latest) の
+   **Assets** から `ac9_cloth_retopo-<バージョン>.zip` をダウンロードします。
+2. Blender で **Edit > Preferences > Add-ons > Install from Disk** から、その ZIP を指定して有効化します。
+
+> **Source code (zip)** と、ページ上部の緑の **Code** ボタンにある **Download ZIP** では
+> インストールできません。どちらもソースツリーだけのアーカイブで、同梱している shapely の
+> wheel が入っていないためです。`ac9_cloth_retopo-` で始まる ZIP を選んでください。
+
 3Dビューポートのサイドバー（N キー）に **AC9 Cloth Retopo** タブが出ます。
 
 他に入れるものはありません。Preview Fill と Grid Regions が使う shapely は wheel として
@@ -27,7 +34,7 @@ ZIP を **Edit > Preferences > Add-ons > Install from Disk** から指定して�
 対象は Windows x64 / macOS arm64・x64 / Linux x64・arm64 です。例外は Windows on ARM で、
 PyPI に shapely の wheel が無いため、その環境ではこの2機能が実行の代わりにその旨を表示します。
 
-ソースから ZIP を作る場合:
+（開発者向け）ソースから ZIP を自分で作る場合:
 
 ```
 blender --command extension build --source-dir ac9_cloth_retopo --output-dir .

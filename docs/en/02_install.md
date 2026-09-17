@@ -11,10 +11,17 @@
 
 ## Installation
 
-1. Package the add-on as a ZIP.
+1. Open the [latest release page](https://github.com/openfashion-labs/ac9_cloth_retopo/releases/latest)
+   and download `ac9_cloth_retopo-<version>.zip` from **Assets**.
 2. In Blender, go to **Edit > Preferences > Add-ons**.
-3. Choose **Install from Disk** from the menu in the top right, and point it at the ZIP.
+3. Choose **Install from Disk** from the menu in the top right, and point it at the ZIP you downloaded.
 4. Enable **AC9 Cloth Retopo** in the list.
+
+> **Which ZIP to pick**
+> **Source code (zip)** also sits in Assets, and it will not install. Neither will
+> **Download ZIP** under the green **Code** button at the top of the repository — it is the
+> same archive. Both are the source tree alone, without the bundled shapely wheels.
+> Pick the one whose name starts with **`ac9_cloth_retopo-`** (it is over 20MB).
 
 Once enabled, an **AC9 Cloth Retopo** tab appears in the 3D viewport sidebar (N key).
 Panels are ordered by workflow phase: **Prepare** / **Setup** / **Boundary** / **Faces** / **3D View** / **Guide Maps** / **Overlays** / **Advanced**.
