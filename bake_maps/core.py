@@ -441,30 +441,68 @@ def _restore_render(saved) -> None:
             pass  # the object went away during the bake
 
 
-def _enable_collections_for(view_layer, obj):
-    """Make every layer-collection chain containing *obj* visible/included.
+def _set_collection_flags(lc, exclude, lc_hide, coll_hide) -> None:
+    """Write the three flags, skipping any that is already right.
 
-    Returns a list of (layer_collection, exclude, lc_hide, coll_hide) tuples
-    for restoring afterwards. Needed because baking requires the object to be
-    in the view layer — excluded/hidden parent collections silently break
-    bpy.ops.object.bake with 'No valid selected objects'.
+    Worth the three comparisons: assigning .exclude is not a plain flag write,
+    it cascades to the whole subtree and resyncs the view layer.
     """
-    saved = []
+    if lc.exclude != exclude:
+        lc.exclude = exclude
+    if lc.hide_viewport != lc_hide:
+        lc.hide_viewport = lc_hide
+    if lc.collection.hide_viewport != coll_hide:
+        lc.collection.hide_viewport = coll_hide
+
+
+def _enable_collections_for(view_layer, obj):
+    """Make every layer-collection chain containing *obj* visible/included,
+    and leave every other collection exactly as it was.
+
+    Returns a list of (layer_collection, exclude, lc_hide, coll_hide) tuples,
+    parents before their children, for restoring afterwards. Needed because
+    baking requires the object to be in the view layer — excluded/hidden
+    parent collections silently break bpy.ops.object.bake with 'No valid
+    selected objects'.
+
+    The list covers the whole tree rather than just the chain, because
+    clearing .exclude cascades: Blender sets it recursively, the way the
+    Outliner checkbox does. Measured on a demo file where the garment sat in
+    one collection and 14 unused high-poly meshes were parked in a second one
+    with its checkbox off — clearing exclude up the garment's chain pulled all
+    14 back into the view layer, still selected, _isolate_render then set
+    hide_render on them, and the bake died with 'Object "..." is not enabled
+    for rendering'. Writing every collection its own value, parents first,
+    undoes each cascade right after it happens; the restore pass repeats the
+    same order for the same reason.
+    """
+    order = []
+
+    def collect(lc):
+        order.append(lc)
+        for child in lc.children:
+            collect(child)
+
+    collect(view_layer.layer_collection)
+    saved = [(lc, lc.exclude, lc.hide_viewport, lc.collection.hide_viewport)
+             for lc in order]
+
+    chain = set()
 
     def walk(lc):
-        found = False
-        for child in lc.children:
-            if walk(child):
-                found = True
+        found = any([walk(child) for child in lc.children])
         if obj.name in lc.collection.objects or found:
-            saved.append((lc, lc.exclude, lc.hide_viewport, lc.collection.hide_viewport))
-            lc.exclude = False
-            lc.hide_viewport = False
-            lc.collection.hide_viewport = False
+            chain.add(lc.as_pointer())
             return True
         return False
 
     walk(view_layer.layer_collection)
+
+    for lc, exclude, lc_hide, coll_hide in saved:
+        if lc.as_pointer() in chain:
+            _set_collection_flags(lc, False, False, False)
+        else:
+            _set_collection_flags(lc, exclude, lc_hide, coll_hide)
     return saved
 
 
@@ -777,8 +815,15 @@ def bake_to_image(
         obj.hide_render = False
         obj.hide_viewport = False
         obj.hide_select = False
-        for o in prev_selected:
-            o.select_set(False)
+        # Everything selected in the view layer right now, not the
+        # prev_selected snapshot taken above: bpy.ops.object.bake checks every
+        # selected object, and an object that is in the view layer but hidden
+        # from the render fails it with 'Object "..." is not enabled for
+        # rendering' — which _isolate_render has just made true of every
+        # object but this one.
+        for o in view_layer.objects:
+            if o.select_get():
+                o.select_set(False)
         obj.select_set(True)
         view_layer.objects.active = obj
 
@@ -842,10 +887,11 @@ def bake_to_image(
         except RuntimeError:
             pass
         obj.hide_render = prev_hide_render
+        # Parents before children, the order _enable_collections_for saved
+        # them in, so that a parent's exclude cascade is overwritten by each
+        # child's own value instead of the other way round.
         for lc, exclude, lc_hide, coll_hide in saved_collections:
-            lc.exclude = exclude
-            lc.hide_viewport = lc_hide
-            lc.collection.hide_viewport = coll_hide
+            _set_collection_flags(lc, exclude, lc_hide, coll_hide)
 
 
 # ---------------------------------------------------------------------------

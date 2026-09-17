@@ -9,6 +9,17 @@ The version number is the one in `blender_manifest.toml`; each release is tagged
 
 ## [Unreleased]
 
+### Fixed
+
+- Baking a Guide Map no longer disturbs collections the Guide is not in.
+  Getting the Guide into the view layer meant clearing `exclude` up its chain,
+  and Blender applies that to the whole subtree — so a collection the user had
+  unchecked in the Outliner came back, with its objects still selected, and the
+  bake stopped with `Object "..." is not enabled for rendering`. Every
+  collection now keeps its own value, restored in the same order, and the bake
+  deselects what is in the view layer at that moment rather than what was in it
+  before the collections were touched.
+
 ## [1.1.0] - 2026-09-17
 
 ### Added
