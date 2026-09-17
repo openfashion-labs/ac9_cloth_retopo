@@ -926,7 +926,14 @@ def run_bind_new_verts(
 
     save_attachments_to_mesh(retopo_mesh, attachments)
 
-    stamp_guide_on_mesh(retopo_mesh, len(tris_2d))
+    # Only the freshly bound verts were computed against this Guide; the rest
+    # were loaded as they stood. Stamping unconditionally would tell the three
+    # paths that check the stamp that every attachment on this mesh indexes
+    # into the current Guide, which is the claim the stamp exists to refuse.
+    # A stamp that was already right stays right; a wrong one stays wrong, and
+    # the next full projection recomputes and stamps the result.
+    if guide_stamp_matches(retopo_mesh, len(tris_2d)):
+        stamp_guide_on_mesh(retopo_mesh, len(tris_2d))
     # Boundary flag: keep existing flags (written by forward sync / align) but
     # force the freshly-bound verts to False — even when their new attachment
     # happens to land on a seam edge.  Flagging them here would pin a possibly
